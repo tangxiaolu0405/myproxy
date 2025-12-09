@@ -6,6 +6,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/theme"
 	"myproxy.com/p/internal/config"
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/logging"
@@ -121,6 +122,8 @@ func (a *AppState) UpdateProxyStatus() {
 // InitApp 初始化应用
 func (a *AppState) InitApp() {
 	a.App = app.New()
+	// 默认使用黑色主题（可改为 theme.VariantLight）
+	a.App.Settings().SetTheme(NewMonochromeTheme(theme.VariantDark))
 	a.Window = a.App.NewWindow("SOCKS5 代理客户端")
 	a.Window.Resize(fyne.NewSize(900, 700))
 
