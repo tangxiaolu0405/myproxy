@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/fsnotify/fsnotify"
 )
 
 // LogEntry 表示一条日志条目
@@ -33,10 +33,10 @@ type LogsPanel struct {
 	logContent    *widget.RichText // 使用 RichText 以支持自定义文本颜色
 	levelSel      *widget.Select
 	typeSel       *widget.Select
-	logBuffer     []LogEntry // 日志缓冲区
-	bufferMutex   sync.Mutex // 保护日志缓冲区的互斥锁
-	maxBufferSize int        // 最大缓冲区大小
-	fileWatcher   *fsnotify.Watcher // 文件监控器
+	logBuffer     []LogEntry         // 日志缓冲区
+	bufferMutex   sync.Mutex         // 保护日志缓冲区的互斥锁
+	maxBufferSize int                // 最大缓冲区大小
+	fileWatcher   *fsnotify.Watcher  // 文件监控器
 	ctx           context.Context    // 上下文，用于控制监控 goroutine
 	cancel        context.CancelFunc // 取消函数
 	lastReadPos   int64              // 最后读取的位置
@@ -131,6 +131,15 @@ func (lp *LogsPanel) AppendLog(level, logType, message string) {
 		return
 	}
 
+	// 规范化：级别一律大写，类型仅允许 app/xray
+	level = strings.ToUpper(level)
+	switch strings.ToLower(logType) {
+	case "xray":
+		logType = "xray"
+	default:
+		logType = "app"
+	}
+
 	// 构建完整的日志行（与Logger.log()中的格式保持一致）
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	logLine := fmt.Sprintf("%s [%s] [%s] %s", timestamp, level, logType, message)
@@ -206,12 +215,12 @@ func (lp *LogsPanel) loadInitialLogs() {
 			lp.logBuffer = append(lp.logBuffer, *entry)
 		}
 	}
-	
+
 	// 更新 lastReadPos 为文件末尾（避免重复读取）
 	if fileInfo, err := os.Stat(logFilePath); err == nil {
 		lp.lastReadPos = fileInfo.Size()
 	}
-	
+
 	lp.bufferMutex.Unlock()
 
 	// 刷新显示
@@ -250,7 +259,7 @@ func (lp *LogsPanel) parseLogLine(line string) *LogEntry {
 		if typeEnd != -1 {
 			typeEnd += typeStart
 			// 应用日志格式
-			logType = line[typeStart+1 : typeEnd]
+			logType = strings.ToLower(line[typeStart+1 : typeEnd])
 			message = strings.TrimSpace(line[typeEnd+1:])
 			var err error
 			timestamp, err = time.Parse("2006-01-02 15:04:05", timestampStr)
@@ -266,15 +275,12 @@ func (lp *LogsPanel) parseLogLine(line string) *LogEntry {
 		rest := strings.TrimSpace(line[levelEnd+1:])
 		colonIndex := strings.Index(rest, ":")
 		if colonIndex > 0 {
-			tag := strings.TrimSpace(rest[:colonIndex])
+			_ = strings.TrimSpace(rest[:colonIndex])
 			message = strings.TrimSpace(rest[colonIndex+1:])
-			
-			// 从 tag 中提取类型（例如 "app/log" -> "xray"）
+
+			// 从 tag 中提取类型（例如 "app/log" -> 归并为 xray）
 			logType = "xray"
-			if strings.HasPrefix(tag, "app/") || strings.HasPrefix(tag, "proxy/") {
-				logType = "xray"
-			}
-			
+
 			// 解析 xray 时间戳格式: 2025/12/15 16:53:13.879127
 			var err error
 			timestamp, err = time.Parse("2006/01/02 15:04:05.000000", timestampStr)
@@ -293,17 +299,14 @@ func (lp *LogsPanel) parseLogLine(line string) *LogEntry {
 		}
 	}
 
-	// 标准化级别名称
+	// 标准化级别名称（全大写），来源小写
 	level = strings.ToUpper(level)
-	if level == "DEBUG" || level == "Debug" {
-		level = "DEBUG"
-	} else if level == "INFO" || level == "Info" {
+	switch level {
+	case "DEBUG", "INFO", "WARN", "ERROR", "FATAL":
+	default:
 		level = "INFO"
-	} else if level == "WARN" || level == "Warning" {
-		level = "WARN"
-	} else if level == "ERROR" || level == "Error" {
-		level = "ERROR"
 	}
+	logType = strings.ToLower(logType)
 
 	return &LogEntry{
 		Timestamp: timestamp,

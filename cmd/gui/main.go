@@ -40,10 +40,12 @@ func main() {
 
 	// 初始化应用（创建Fyne应用和窗口）
 	appState.InitApp()
+	// 设置应用图标（使用内置默认黑色占位图标）
+	appState.App.SetIcon(appIcon)
 
 	// 创建主窗口（此时LogsPanel已创建）
 	mainWindow := ui.NewMainWindow(appState)
-	
+
 	// 创建日志回调函数，用于实时更新UI（确保日志文件写入和UI显示一致）
 	logCallback := func(level, logType, message, logLine string) {
 		if appState.LogsPanel != nil {
@@ -57,10 +59,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化日志失败: %v", err)
 	}
-	
+
 	// 设置logger到appState
 	appState.Logger = logger
-	
+
 	// Logger初始化后，启动日志文件监控（用于监控xray日志等直接从文件写入的日志）
 	if appState.LogsPanel != nil {
 		appState.LogsPanel.StartLogFileWatcher()

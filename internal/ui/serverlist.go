@@ -266,10 +266,6 @@ func (slp *ServerListPanel) onStartProxyFromSelected() {
 		slp.appState.XrayInstance.Stop()
 		slp.appState.XrayInstance = nil
 	}
-	if slp.appState.ProxyForwarder != nil && slp.appState.ProxyForwarder.IsRunning {
-		slp.appState.ProxyForwarder.Stop()
-		slp.appState.ProxyForwarder = nil
-	}
 
 	// 把当前的设置为选中
 	slp.appState.ServerManager.SelectServer(srv.ID)
@@ -295,10 +291,6 @@ func (slp *ServerListPanel) onStartProxy(id widget.ListItemID) {
 		slp.appState.XrayInstance.Stop()
 		slp.appState.XrayInstance = nil
 	}
-	if slp.appState.ProxyForwarder != nil && slp.appState.ProxyForwarder.IsRunning {
-		slp.appState.ProxyForwarder.Stop()
-		slp.appState.ProxyForwarder = nil
-	}
 
 	// 启动代理
 	slp.startProxyWithServer(&srv)
@@ -316,7 +308,7 @@ func (slp *ServerListPanel) startProxyWithServer(srv *config.Server) {
 
 	// 使用统一的日志文件路径（与应用日志使用同一个文件）
 	unifiedLogPath := slp.appState.Logger.GetLogFilePath()
-	
+
 	// 创建xray配置，设置日志文件路径为统一日志文件
 	xrayConfigJSON, err := xray.CreateXrayConfig(proxyPort, srv, unifiedLogPath)
 	if err != nil {
@@ -441,29 +433,6 @@ func (slp *ServerListPanel) onStopProxy() {
 		// 追加日志到日志面板
 		if slp.appState != nil {
 			slp.appState.AppendLog("INFO", "xray", "xray-core代理已停止")
-		}
-	}
-
-	// 如果还有旧的转发器在运行，也停止它（兼容旧代码）
-	if slp.appState.ProxyForwarder != nil && slp.appState.ProxyForwarder.IsRunning {
-		err := slp.appState.ProxyForwarder.Stop()
-		if err != nil {
-			// 停止失败，记录日志并显示错误（统一错误处理）
-			slp.logAndShowError("停止代理转发器失败", err)
-			return
-		}
-
-		slp.appState.ProxyForwarder = nil
-		stopped = true
-
-		// 记录日志（统一日志记录）
-		if slp.appState.Logger != nil {
-			slp.appState.Logger.InfoWithType(logging.LogTypeProxy, "代理转发器已停止")
-		}
-
-		// 追加日志到日志面板
-		if slp.appState != nil {
-			slp.appState.AppendLog("INFO", "proxy", "代理转发器已停止")
 		}
 	}
 

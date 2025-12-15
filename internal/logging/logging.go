@@ -2,7 +2,6 @@ package logging
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,13 +50,13 @@ type LogPanelCallback func(level, logType, message, logLine string)
 // Logger 日志记录器
 // 负责统一管理日志文件的写入和UI显示，确保两者一致
 type Logger struct {
-	level          LogLevel
-	file           *os.File        // 单一日志文件
-	console        bool
-	mutex          sync.Mutex
-	logFilePath    string
-	logDir         string
-	panelCallback  LogPanelCallback // UI面板回调函数（用于实时更新UI）
+	level         LogLevel
+	file          *os.File // 单一日志文件
+	console       bool
+	mutex         sync.Mutex
+	logFilePath   string
+	logDir        string
+	panelCallback LogPanelCallback // UI面板回调函数（用于实时更新UI）
 }
 
 const (
@@ -97,7 +96,7 @@ func NewLogger(logFilePath string, console bool, level string, panelCallback ...
 		logFilePath: unifiedLogPath,
 		logDir:      logDir,
 	}
-	
+
 	// 设置UI面板回调（如果提供）
 	if len(panelCallback) > 0 && panelCallback[0] != nil {
 		logger.panelCallback = panelCallback[0]
@@ -209,12 +208,18 @@ func (l *Logger) log(level LogLevel, logType LogType, format string, args ...int
 		return
 	}
 
+	// 规范化日志类型：仅保留 app / xray，其他归并为 app
+	logTypeStr := strings.ToLower(string(logType))
+	if logTypeStr != "xray" {
+		logTypeStr = "app"
+	}
+
 	// 生成日志消息
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	levelName := levelNames[level]
 	message := fmt.Sprintf(format, args...)
 	// 在日志中添加类型标识
-	logLine := fmt.Sprintf("%s [%s] [%s] %s\n", timestamp, levelName, logType, message)
+	logLine := fmt.Sprintf("%s [%s] [%s] %s\n", timestamp, levelName, logTypeStr, message)
 
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
@@ -240,7 +245,7 @@ func (l *Logger) log(level LogLevel, logType LogType, format string, args ...int
 	if l.panelCallback != nil {
 		// 移除末尾的换行符，因为UI显示不需要
 		logLineForUI := strings.TrimRight(logLine, "\n")
-		l.panelCallback(levelName, string(logType), message, logLineForUI)
+		l.panelCallback(levelName, logTypeStr, message, logLineForUI)
 	}
 
 	// 如果是致命错误，退出程序
@@ -269,54 +274,14 @@ func (l *Logger) reopenFile() {
 	}
 }
 
-// Debug 记录调试日志（默认应用日志）
-func (l *Logger) Debug(format string, args ...interface{}) {
-	l.log(LevelDebug, LogTypeApp, format, args...)
-}
-
-// DebugWithType 记录指定类型的调试日志
-func (l *Logger) DebugWithType(logType LogType, format string, args ...interface{}) {
-	l.log(LevelDebug, logType, format, args...)
-}
-
-// Info 记录信息日志（默认应用日志）
-func (l *Logger) Info(format string, args ...interface{}) {
-	l.log(LevelInfo, LogTypeApp, format, args...)
-}
-
 // InfoWithType 记录指定类型的信息日志
 func (l *Logger) InfoWithType(logType LogType, format string, args ...interface{}) {
 	l.log(LevelInfo, logType, format, args...)
 }
 
-// Warn 记录警告日志（默认应用日志）
-func (l *Logger) Warn(format string, args ...interface{}) {
-	l.log(LevelWarn, LogTypeApp, format, args...)
-}
-
-// WarnWithType 记录指定类型的警告日志
-func (l *Logger) WarnWithType(logType LogType, format string, args ...interface{}) {
-	l.log(LevelWarn, logType, format, args...)
-}
-
 // Error 记录错误日志（默认应用日志）
 func (l *Logger) Error(format string, args ...interface{}) {
 	l.log(LevelError, LogTypeApp, format, args...)
-}
-
-// ErrorWithType 记录指定类型的错误日志
-func (l *Logger) ErrorWithType(logType LogType, format string, args ...interface{}) {
-	l.log(LevelError, logType, format, args...)
-}
-
-// Fatal 记录致命日志（默认应用日志）
-func (l *Logger) Fatal(format string, args ...interface{}) {
-	l.log(LevelFatal, LogTypeApp, format, args...)
-}
-
-// FatalWithType 记录指定类型的致命日志
-func (l *Logger) FatalWithType(logType LogType, format string, args ...interface{}) {
-	l.log(LevelFatal, logType, format, args...)
 }
 
 // Close 关闭日志记录器
@@ -331,77 +296,7 @@ func (l *Logger) Close() {
 	}
 }
 
-// Rotate 日志轮转
-func (l *Logger) Rotate() error {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
-	timestamp := time.Now().Format("20060102150405")
-
-	// 关闭当前日志文件
-	if l.file != nil {
-		l.file.Close()
-		l.file = nil
-	}
-
-	// 备份当前日志文件
-	if _, err := os.Stat(l.logFilePath); err == nil {
-		backupPath := fmt.Sprintf("%s.%s", l.logFilePath, timestamp)
-		if err := os.Rename(l.logFilePath, backupPath); err != nil {
-			return fmt.Errorf("备份日志文件失败: %w", err)
-		}
-	}
-
-	// 重新打开日志文件
-	newFile, err := os.OpenFile(l.logFilePath, os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("重新打开日志文件失败: %w", err)
-	}
-
-	l.file = newFile
-	return nil
-}
-
-// GetLogs 获取所有日志内容
-func (l *Logger) GetLogs(lines int) ([]string, error) {
-	return l.GetLogsByType("", lines)
-}
-
 // GetLogFilePath 获取日志文件路径
 func (l *Logger) GetLogFilePath() string {
 	return l.logFilePath
-}
-
-// GetLogsByType 获取指定类型的日志内容（logType 参数已废弃，保留用于兼容性）
-func (l *Logger) GetLogsByType(logType LogType, lines int) ([]string, error) {
-	// 打开统一的日志文件
-	file, err := os.Open(l.logFilePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []string{}, nil // 文件不存在，返回空列表
-		}
-		return nil, fmt.Errorf("打开日志文件失败: %w", err)
-	}
-	defer file.Close()
-
-	// 读取文件内容
-	content, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("读取日志文件失败: %w", err)
-	}
-
-	// 按行分割
-	logLines := strings.Split(string(content), "\n")
-	// 移除最后一个空行
-	if len(logLines) > 0 && logLines[len(logLines)-1] == "" {
-		logLines = logLines[:len(logLines)-1]
-	}
-
-	// 返回最后 N 行
-	start := 0
-	if len(logLines) > lines {
-		start = len(logLines) - lines
-	}
-
-	return logLines[start:], nil
 }

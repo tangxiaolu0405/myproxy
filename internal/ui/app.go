@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -11,7 +12,6 @@ import (
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/logging"
 	"myproxy.com/p/internal/ping"
-	"myproxy.com/p/internal/proxy"
 	"myproxy.com/p/internal/server"
 	"myproxy.com/p/internal/subscription"
 	"myproxy.com/p/internal/xray"
@@ -28,9 +28,6 @@ type AppState struct {
 	App                 fyne.App
 	Window              fyne.Window
 	SelectedServerID    string
-
-	// 代理转发器 - 用于实际启动和管理代理服务（保留用于兼容）
-	ProxyForwarder *proxy.Forwarder
 
 	// Xray 实例 - 用于 xray-core 代理
 	XrayInstance *xray.XrayInstance
@@ -123,13 +120,6 @@ func (a *AppState) updateStatusBindings() {
 		} else {
 			proxyPort = 10080 // 默认端口
 		}
-	} else if a.ProxyForwarder != nil && a.ProxyForwarder.IsRunning {
-		// 旧的代理转发器正在运行（兼容旧代码）
-		isRunning = true
-		// 从本地地址中提取端口
-		if a.Config != nil && a.Config.AutoProxyPort > 0 {
-			proxyPort = a.Config.AutoProxyPort
-		}
 	}
 
 	if isRunning {
@@ -181,7 +171,7 @@ func (a *AppState) InitApp() {
 	// Fyne 应用初始化后，可以初始化绑定数据
 	a.updateStatusBindings()
 	a.updateSubscriptionLabels()
-	
+
 	// 注意：Logger的回调需要在LogsPanel创建后设置（在NewMainWindow之后）
 }
 
@@ -220,9 +210,17 @@ func (a *AppState) UpdateSubscriptionLabels() {
 // 该方法可以从任何地方调用，会自动追加到日志缓冲区并更新显示
 // 参数：
 //   - level: 日志级别 (DEBUG, INFO, WARN, ERROR, FATAL)
-//   - logType: 日志类型 (app, proxy)
+//   - logType: 日志类型 (app 或 xray；其他将归并为 app)
 //   - message: 日志消息
 func (a *AppState) AppendLog(level, logType, message string) {
+	// 规范化：级别大写，来源仅 app/xray
+	level = strings.ToUpper(level)
+	switch strings.ToLower(logType) {
+	case "xray":
+		logType = "xray"
+	default:
+		logType = "app"
+	}
 	if a.LogsPanel != nil {
 		a.LogsPanel.AppendLog(level, logType, message)
 	}
