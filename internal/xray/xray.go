@@ -438,7 +438,7 @@ func CreateOutboundFromServer(server *config.Server) (map[string]interface{}, er
 				{
 					"address":  server.Addr,
 					"port":     server.Port,
-					"password": server.TrojanPassword,
+					"password": server.Password,
 				},
 			},
 		}
