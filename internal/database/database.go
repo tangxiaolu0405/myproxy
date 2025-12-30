@@ -385,6 +385,37 @@ func GetSubscriptionByID(id int64) (*Subscription, error) {
 	return &sub, nil
 }
 
+// UpdateSubscriptionByID 根据 ID 更新订阅的 URL 和标签。
+// 参数：
+//   - id: 订阅 ID
+//   - url: 新的订阅 URL
+//   - label: 新的订阅标签
+//
+// 返回：错误（如果有）
+func UpdateSubscriptionByID(id int64, url, label string) error {
+	now := time.Now()
+	
+	// 检查订阅是否存在
+	existingSub, err := GetSubscriptionByID(id)
+	if err != nil {
+		return fmt.Errorf("查询订阅失败: %w", err)
+	}
+	if existingSub == nil {
+		return fmt.Errorf("订阅不存在")
+	}
+	
+	// 更新订阅信息
+	_, err = DB.Exec(
+		"UPDATE subscriptions SET url = ?, label = ?, updated_at = ? WHERE id = ?",
+		url, label, now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("更新订阅失败: %w", err)
+	}
+	
+	return nil
+}
+
 // GetServerCountBySubscriptionID 获取指定订阅的服务器数量。
 // 参数：
 //   - subscriptionID: 订阅 ID

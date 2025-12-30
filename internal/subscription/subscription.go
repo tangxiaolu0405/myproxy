@@ -618,6 +618,26 @@ func (sm *SubscriptionManager) UpdateSubscription(url string, label ...string) e
 	return nil
 }
 
+// UpdateSubscriptionByID 根据订阅 ID 更新订阅。
+// 该方法会先获取订阅信息，然后拉取最新的订阅内容并更新。
+// 参数：
+//   - id: 订阅 ID
+//
+// 返回：错误（如果有）
+func (sm *SubscriptionManager) UpdateSubscriptionByID(id int64) error {
+	// 根据 ID 获取订阅信息
+	sub, err := database.GetSubscriptionByID(id)
+	if err != nil {
+		return fmt.Errorf("获取订阅信息失败: %w", err)
+	}
+	if sub == nil {
+		return fmt.Errorf("订阅不存在")
+	}
+	
+	// 调用 UpdateSubscription 更新订阅（会拉取最新内容）
+	return sm.UpdateSubscription(sub.URL, sub.Label)
+}
+
 // parseSubscription 解析订阅内容
 func (sm *SubscriptionManager) parseSubscription(content string) ([]config.Server, error) {
 	// 尝试解码Base64

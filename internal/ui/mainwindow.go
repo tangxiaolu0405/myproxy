@@ -11,6 +11,54 @@ import (
 	"myproxy.com/p/internal/database"
 )
 
+// PageType 页面类型枚举
+type PageType int
+
+const (
+	PageTypeHome PageType = iota // 主界面
+	PageTypeNode                 // 节点列表页面
+	PageTypeSettings             // 设置页面
+	PageTypeSubscription         // 订阅管理页面
+)
+
+// PageStack 路由栈结构，用于管理页面导航历史
+type PageStack struct {
+	stack []PageType // 页面栈
+}
+
+// NewPageStack 创建新的路由栈
+func NewPageStack() *PageStack {
+	return &PageStack{
+		stack: make([]PageType, 0),
+	}
+}
+
+// Push 将页面压入栈中
+func (ps *PageStack) Push(pageType PageType) {
+	ps.stack = append(ps.stack, pageType)
+}
+
+// Pop 从栈中弹出页面，如果栈为空返回 false
+func (ps *PageStack) Pop() (PageType, bool) {
+	if len(ps.stack) == 0 {
+		return PageTypeHome, false
+	}
+	lastIndex := len(ps.stack) - 1
+	pageType := ps.stack[lastIndex]
+	ps.stack = ps.stack[:lastIndex]
+	return pageType, true
+}
+
+// Clear 清空路由栈
+func (ps *PageStack) Clear() {
+	ps.stack = ps.stack[:0]
+}
+
+// IsEmpty 检查栈是否为空
+func (ps *PageStack) IsEmpty() bool {
+	return len(ps.stack) == 0
+}
+
 // LayoutConfig 存储窗口布局的配置信息，包括各区域的分割比例。
 // 这些配置会持久化到数据库中，以便在应用重启后恢复用户的布局偏好。
 type LayoutConfig struct {
@@ -33,12 +81,13 @@ func DefaultLayoutConfig() *LayoutConfig {
 // 它负责协调订阅管理、服务器列表、日志显示和状态信息四个主要区域的显示。
 type MainWindow struct {
 	appState          *AppState
-	subscriptionPanel *SubscriptionPanel
 	serverListPanel   *ServerListPanel
 	logsPanel         *LogsPanel
 	statusPanel       *StatusPanel
 	mainSplit         *container.Split // 主分割容器（服务器列表和日志，保留用于日志面板独立窗口等场景）
 	layoutConfig      *LayoutConfig    // 布局配置
+	pageStack         *PageStack      // 路由栈，用于管理页面导航历史
+	currentPage       PageType        // 当前页面类型
 
 	// 单窗口多页面：通过 SetContent() 在一个窗口内切换不同的 Container
 	homePage         fyne.CanvasObject // 主界面（极简一键开关）
@@ -56,14 +105,15 @@ type MainWindow struct {
 // 返回：初始化后的主窗口实例
 func NewMainWindow(appState *AppState) *MainWindow {
 	mw := &MainWindow{
-		appState: appState,
+		appState:   appState,
+		pageStack:  NewPageStack(),
+		currentPage: PageTypeHome,
 	}
 
 	// 加载布局配置
 	mw.loadLayoutConfig()
 
 	// 创建各个面板
-	mw.subscriptionPanel = NewSubscriptionPanel(appState)
 	mw.serverListPanel = NewServerListPanel(appState)
 	mw.logsPanel = NewLogsPanel(appState)
 	mw.statusPanel = NewStatusPanel(appState)
@@ -141,9 +191,6 @@ func (mw *MainWindow) Refresh() {
 	}
 	if mw.logsPanel != nil {
 		mw.logsPanel.Refresh() // 刷新日志面板，显示最新日志
-	}
-	if mw.subscriptionPanel != nil {
-		mw.subscriptionPanel.refreshSubscriptionList()
 	}
 	// 使用双向绑定，只需更新绑定数据，UI 会自动更新
 	if mw.appState != nil {
@@ -257,10 +304,11 @@ func (mw *MainWindow) buildNodePage() fyne.CanvasObject {
 
 // buildSettingsPage 构建设置页面 Container（settingsPage）
 func (mw *MainWindow) buildSettingsPage() fyne.CanvasObject {
-	// 顶部栏：返回主界面 + 标题
-	backBtn := NewStyledButton("← 返回", nil, func() {
-		mw.ShowHomePage()
+	// 顶部栏：返回上一个页面 + 标题
+	backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
+		mw.Back()
 	})
+	backBtn.Importance = widget.LowImportance
 	titleLabel := NewTitleLabel("设置")
 	headerBar := container.NewPadded(container.NewHBox(
 		backBtn,
@@ -282,79 +330,108 @@ func (mw *MainWindow) buildSettingsPage() fyne.CanvasObject {
 	)
 }
 
-// ShowHomePage 切换到主界面（homePage）
-func (mw *MainWindow) ShowHomePage() {
+// showPage 通用的页面切换方法，会将当前页面压入栈，然后切换到新页面
+func (mw *MainWindow) showPage(pageType PageType, pageContent fyne.CanvasObject, pushCurrent bool) {
 	if mw == nil || mw.appState == nil || mw.appState.Window == nil {
 		return
 	}
-	if mw.homePage == nil {
-		mw.homePage = mw.buildHomePage()
+	
+	// 如果需要压入当前页面（通常从其他页面跳转时需要）
+	if pushCurrent && mw.currentPage != pageType {
+		mw.pageStack.Push(mw.currentPage)
 	}
-	// 先设置内容
-	mw.appState.Window.SetContent(mw.homePage)
+	
+	// 更新当前页面类型
+	mw.currentPage = pageType
+	
+	// 设置内容
+	mw.appState.Window.SetContent(pageContent)
+	
 	// 从数据库读取窗口大小并应用（在SetContent之后，避免内容的最小尺寸要求导致窗口变大）
 	defaultSize := fyne.NewSize(420, 520)
 	windowSize := LoadWindowSize(defaultSize)
 	mw.appState.Window.Resize(windowSize)
 	// 保存当前窗口大小到数据库（确保保存的是设置后的尺寸）
 	SaveWindowSize(windowSize)
+}
+
+// Back 返回到上一个页面（从路由栈中弹出）
+func (mw *MainWindow) Back() {
+	if mw == nil || mw.appState == nil || mw.appState.Window == nil {
+		return
+	}
+	
+	// 从栈中弹出上一个页面
+	prevPageType, ok := mw.pageStack.Pop()
+	if !ok {
+		// 如果栈为空，默认返回主界面（不压栈）
+		mw.navigateToPage(PageTypeHome, false)
+		return
+	}
+	
+	// 切换到上一个页面（不压栈，因为这是返回操作）
+	mw.navigateToPage(prevPageType, false)
+}
+
+// navigateToPage 导航到指定页面（内部方法，不压栈）
+func (mw *MainWindow) navigateToPage(pageType PageType, pushCurrent bool) {
+	var pageContent fyne.CanvasObject
+	
+	switch pageType {
+	case PageTypeHome:
+		if mw.homePage == nil {
+			mw.homePage = mw.buildHomePage()
+		}
+		pageContent = mw.homePage
+	case PageTypeNode:
+		if mw.nodePage == nil {
+			mw.nodePage = mw.buildNodePage()
+		}
+		pageContent = mw.nodePage
+	case PageTypeSettings:
+		if mw.settingsPage == nil {
+			mw.settingsPage = mw.buildSettingsPage()
+		}
+		pageContent = mw.settingsPage
+	case PageTypeSubscription:
+		if mw.subscriptionPage == nil {
+			mw.subscriptionPageInstance = NewSubscriptionPage(mw.appState)
+			mw.subscriptionPage = mw.subscriptionPageInstance.Build()
+		}
+		// 刷新订阅列表
+		if mw.subscriptionPageInstance != nil {
+			mw.subscriptionPageInstance.Refresh()
+		}
+		pageContent = mw.subscriptionPage
+	default:
+		// 未知页面类型，返回主界面
+		if mw.homePage == nil {
+			mw.homePage = mw.buildHomePage()
+		}
+		pageContent = mw.homePage
+		pageType = PageTypeHome
+	}
+	
+	mw.showPage(pageType, pageContent, pushCurrent)
+}
+
+// ShowHomePage 切换到主界面（homePage）
+func (mw *MainWindow) ShowHomePage() {
+	mw.navigateToPage(PageTypeHome, true)
 }
 
 // ShowNodePage 切换到节点列表页面（nodePage）
 func (mw *MainWindow) ShowNodePage() {
-	if mw == nil || mw.appState == nil || mw.appState.Window == nil {
-		return
-	}
-	if mw.nodePage == nil {
-		mw.nodePage = mw.buildNodePage()
-	}
-	// 先设置内容
-	mw.appState.Window.SetContent(mw.nodePage)
-	// 从数据库读取窗口大小并应用（在SetContent之后，避免内容的最小尺寸要求导致窗口变大）
-	defaultSize := fyne.NewSize(420, 520)
-	windowSize := LoadWindowSize(defaultSize)
-	mw.appState.Window.Resize(windowSize)
-	// 保存当前窗口大小到数据库（确保保存的是设置后的尺寸）
-	SaveWindowSize(windowSize)
+	mw.navigateToPage(PageTypeNode, true)
 }
 
 // ShowSettingsPage 切换到设置页面（settingsPage）
 func (mw *MainWindow) ShowSettingsPage() {
-	if mw == nil || mw.appState == nil || mw.appState.Window == nil {
-		return
-	}
-	if mw.settingsPage == nil {
-		mw.settingsPage = mw.buildSettingsPage()
-	}
-	// 先设置内容
-	mw.appState.Window.SetContent(mw.settingsPage)
-	// 从数据库读取窗口大小并应用（在SetContent之后，避免内容的最小尺寸要求导致窗口变大）
-	defaultSize := fyne.NewSize(420, 520)
-	windowSize := LoadWindowSize(defaultSize)
-	mw.appState.Window.Resize(windowSize)
-	// 保存当前窗口大小到数据库（确保保存的是设置后的尺寸）
-	SaveWindowSize(windowSize)
+	mw.navigateToPage(PageTypeSettings, true)
 }
 
 // ShowSubscriptionPage 切换到订阅管理页面（subscriptionPage）
 func (mw *MainWindow) ShowSubscriptionPage() {
-	if mw == nil || mw.appState == nil || mw.appState.Window == nil {
-		return
-	}
-	if mw.subscriptionPage == nil {
-		mw.subscriptionPageInstance = NewSubscriptionPage(mw.appState)
-		mw.subscriptionPage = mw.subscriptionPageInstance.Build()
-	}
-	// 刷新订阅列表
-	if mw.subscriptionPageInstance != nil {
-		mw.subscriptionPageInstance.Refresh()
-	}
-	// 先设置内容
-	mw.appState.Window.SetContent(mw.subscriptionPage)
-	// 从数据库读取窗口大小并应用（在SetContent之后，避免内容的最小尺寸要求导致窗口变大）
-	defaultSize := fyne.NewSize(420, 520)
-	windowSize := LoadWindowSize(defaultSize)
-	mw.appState.Window.Resize(windowSize)
-	// 保存当前窗口大小到数据库（确保保存的是设置后的尺寸）
-	SaveWindowSize(windowSize)
+	mw.navigateToPage(PageTypeSubscription, true)
 }
+

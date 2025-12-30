@@ -7,6 +7,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
@@ -14,10 +15,100 @@ import (
 	"myproxy.com/p/internal/database"
 )
 
+// showFormDialogWithIconButtons 显示自定义表单对话框，按钮仅显示图标
+func showFormDialogWithIconButtons(title string, items []*widget.FormItem, onConfirm func(), parent fyne.Window) {
+	form := widget.NewForm(items...)
+	
+	// 确认按钮（仅图标）
+	confirmBtn := widget.NewButtonWithIcon("", theme.ConfirmIcon(), func() {
+		onConfirm()
+	})
+	confirmBtn.Importance = widget.HighImportance
+	
+	// 取消按钮（仅图标）
+	cancelBtn := widget.NewButtonWithIcon("", theme.CancelIcon(), func() {
+		// 关闭对话框
+	})
+	cancelBtn.Importance = widget.LowImportance
+	
+	// 按钮容器
+	buttonBar := container.NewHBox(
+		layout.NewSpacer(),
+		cancelBtn,
+		confirmBtn,
+	)
+	
+	// 对话框内容
+	content := container.NewVBox(
+		widget.NewLabelWithStyle(title, fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		form,
+		buttonBar,
+	)
+	
+	// 创建自定义对话框
+	d := dialog.NewCustom("", "", content, parent)
+	
+	// 设置取消按钮的关闭行为
+	cancelBtn.OnTapped = func() {
+		d.Hide()
+	}
+	
+	d.Resize(fyne.NewSize(420, 240))
+	d.Show()
+}
+
+// showConfirmDialogWithIconButtons 显示自定义确认对话框，按钮仅显示图标
+func showConfirmDialogWithIconButtons(title, message string, onConfirm func(), parent fyne.Window) {
+	// 确认按钮（仅图标）
+	confirmBtn := widget.NewButtonWithIcon("", theme.ConfirmIcon(), func() {
+		onConfirm()
+	})
+	confirmBtn.Importance = widget.HighImportance
+	
+	// 取消按钮（仅图标）
+	cancelBtn := widget.NewButtonWithIcon("", theme.CancelIcon(), func() {
+		// 关闭对话框
+	})
+	cancelBtn.Importance = widget.LowImportance
+	
+	// 按钮容器
+	buttonBar := container.NewHBox(
+		layout.NewSpacer(),
+		cancelBtn,
+		confirmBtn,
+	)
+	
+	// 对话框内容
+	content := container.NewVBox(
+		widget.NewLabelWithStyle(title, fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewLabel(message),
+		buttonBar,
+	)
+	
+	// 创建自定义对话框
+	d := dialog.NewCustom("", "", content, parent)
+	
+	// 设置取消按钮的关闭行为
+	cancelBtn.OnTapped = func() {
+		d.Hide()
+	}
+	
+	// 设置确认按钮的关闭行为
+	originalOnConfirm := confirmBtn.OnTapped
+	confirmBtn.OnTapped = func() {
+		originalOnConfirm()
+		d.Hide()
+	}
+	
+	d.Resize(fyne.NewSize(400, 180))
+	d.Show()
+}
+
 // SubscriptionPage 订阅管理页面
 type SubscriptionPage struct {
 	appState      *AppState
 	subscriptions []*database.Subscription
+	subscriptionsBinding binding.UntypedList // 订阅列表绑定
 	list          *widget.List
 	content       fyne.CanvasObject
 }
@@ -25,43 +116,50 @@ type SubscriptionPage struct {
 // NewSubscriptionPage 创建订阅管理页面
 func NewSubscriptionPage(appState *AppState) *SubscriptionPage {
 	sp := &SubscriptionPage{
-		appState: appState,
+		appState:            appState,
+		subscriptionsBinding: binding.NewUntypedList(),
 	}
 	sp.loadSubscriptions()
+	
+	// 监听绑定数据变化，自动刷新列表
+	sp.subscriptionsBinding.AddListener(binding.NewDataListener(func() {
+		if sp.list != nil {
+			sp.list.Refresh()
+		}
+	}))
+	
 	return sp
 }
 
 // Build 构建订阅管理页面UI
 func (sp *SubscriptionPage) Build() fyne.CanvasObject {
-	// 1. 顶部导航栏 (简约风格)
+	// 1. 返回按钮
 	backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
 		if sp.appState != nil && sp.appState.MainWindow != nil {
-			sp.appState.MainWindow.ShowHomePage()
+			sp.appState.MainWindow.Back()
 		}
 	})
 	backBtn.Importance = widget.LowImportance
 
-	title := widget.NewLabelWithStyle("订阅管理", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	navBar := container.NewHBox(backBtn, title)
-
-	// 2. 操作工具栏 (位于标题下方，紧凑设计)
+	// 2. 操作工具栏 (替换标题栏位置)
 	addBtn := widget.NewButtonWithIcon("新增订阅", theme.ContentAddIcon(), sp.showAddSubscriptionDialog)
 	addBtn.Importance = widget.HighImportance
 
 	batchUpdateBtn := widget.NewButtonWithIcon("全部更新", theme.ViewRefreshIcon(), sp.batchUpdateSubscriptions)
 	batchUpdateBtn.Importance = widget.LowImportance
 
-	actionToolbar := container.NewHBox(
+	// 合并返回按钮和操作工具栏到一行
+	headerBar := container.NewHBox(
+		backBtn,
 		layout.NewSpacer(),
-		batchUpdateBtn,
 		addBtn,
+		batchUpdateBtn,
 	)
 
 	// 组合头部区域
 	headerStack := container.NewVBox(
-		container.NewPadded(navBar),
-		container.NewPadded(actionToolbar),
-		canvas.NewLine(theme.SeparatorColor()),
+		container.NewPadded(headerBar),
+		canvas.NewLine(theme.Color(theme.ColorNameSeparator)),
 	)
 
 	// 3. 订阅列表 (支持滚动)
@@ -73,7 +171,7 @@ func (sp *SubscriptionPage) Build() fyne.CanvasObject {
 
 	// 包装在滚动容器中并设置最小尺寸确保布局占满
 	scrollList := container.NewScroll(sp.list)
-	
+
 	sp.content = container.NewBorder(
 		headerStack,
 		nil, nil, nil,
@@ -90,6 +188,21 @@ func (sp *SubscriptionPage) loadSubscriptions() {
 	} else {
 		sp.subscriptions = subscriptions
 	}
+	
+	// 更新绑定数据，触发 UI 自动刷新
+	sp.updateSubscriptionsBinding()
+}
+
+// updateSubscriptionsBinding 更新订阅列表绑定数据
+func (sp *SubscriptionPage) updateSubscriptionsBinding() {
+	// 将订阅列表转换为 any 类型切片
+	items := make([]any, len(sp.subscriptions))
+	for i, sub := range sp.subscriptions {
+		items[i] = sub
+	}
+	
+	// 使用 Set 方法替换整个列表，这会触发绑定更新
+	_ = sp.subscriptionsBinding.Set(items)
 }
 
 func (sp *SubscriptionPage) getSubscriptionCount() int {
@@ -110,9 +223,7 @@ func (sp *SubscriptionPage) updateSubscriptionItem(id widget.ListItemID, obj fyn
 
 func (sp *SubscriptionPage) Refresh() {
 	sp.loadSubscriptions()
-	if sp.list != nil {
-		sp.list.Refresh()
-	}
+	// 绑定数据更新后会自动触发列表刷新，无需手动调用
 }
 
 // showAddSubscriptionDialog 修复逻辑：支持添加重复URL作为新订阅
@@ -139,12 +250,13 @@ func (sp *SubscriptionPage) showAddSubscriptionDialog() {
 				fyne.Do(func() { dialog.ShowError(err, sp.appState.Window) })
 				return
 			}
-			
+
 			// 立即执行一次抓取
 			if sp.appState.SubscriptionManager != nil {
 				sp.appState.SubscriptionManager.FetchSubscription(urlEntry.Text, labelEntry.Text)
 			}
-			
+
+			// 更新绑定数据，自动刷新 UI
 			fyne.Do(func() { sp.Refresh() })
 		}()
 	}, sp.appState.Window)
@@ -164,9 +276,14 @@ func (sp *SubscriptionPage) batchUpdateSubscriptions() {
 		go func() {
 			for _, sub := range sp.subscriptions {
 				if sp.appState.SubscriptionManager != nil {
-					sp.appState.SubscriptionManager.UpdateSubscriptionByID(sub.ID)
+					if err := sp.appState.SubscriptionManager.UpdateSubscriptionByID(sub.ID); err != nil {
+						fyne.Do(func() {
+							dialog.ShowError(fmt.Errorf("更新订阅失败: %w", err), sp.appState.Window)
+						})
+					}
 				}
 			}
+			// 更新绑定数据，自动刷新 UI
 			fyne.Do(func() { sp.Refresh() })
 		}()
 	}, sp.appState.Window)
@@ -180,14 +297,14 @@ type SubscriptionCard struct {
 	sub       *database.Subscription
 	renderObj fyne.CanvasObject
 
-	nameLabel  *widget.Label
-	infoLabel  *widget.Label
-	urlLabel   *widget.Label
-	statusBar  *canvas.Rectangle
+	nameLabel *widget.Label
+	infoLabel *widget.Label
+	urlLabel  *widget.Label
+	statusBar *canvas.Rectangle
 
-	updateBtn  *widget.Button
-	editBtn    *widget.Button
-	deleteBtn  *widget.Button
+	updateBtn *widget.Button
+	editBtn   *widget.Button
+	deleteBtn *widget.Button
 }
 
 func NewSubscriptionCard(page *SubscriptionPage) *SubscriptionCard {
@@ -196,21 +313,21 @@ func NewSubscriptionCard(page *SubscriptionPage) *SubscriptionCard {
 	card.nameLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	card.urlLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Italic: false})
 	card.urlLabel.Truncation = fyne.TextTruncateEllipsis
-	
+
 	card.infoLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{})
-	
+
 	card.statusBar = canvas.NewRectangle(theme.PrimaryColor())
 	card.statusBar.SetMinSize(fyne.NewSize(4, 0))
 
 	// 微型化图标按钮
 	card.updateBtn = widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), nil)
 	card.updateBtn.Importance = widget.LowImportance
-	
+
 	card.editBtn = widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), nil)
 	card.editBtn.Importance = widget.LowImportance
 
 	card.deleteBtn = widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
-	card.deleteBtn.Importance = widget.DangerImportance
+	card.deleteBtn.Importance = widget.DangerImportance // 红色警告背景，白色前景
 
 	card.renderObj = card.setupLayout()
 	card.ExtendBaseWidget(card)
@@ -228,17 +345,19 @@ func (card *SubscriptionCard) setupLayout() fyne.CanvasObject {
 		container.NewHBox(widget.NewIcon(theme.InfoIcon()), card.infoLabel),
 	)
 
-	// 右侧按钮组
-	btnBox := container.NewHBox(
-		card.updateBtn,
-		card.editBtn,
-		card.deleteBtn,
+	// 右侧按钮组，水平排列，使用 Center 垂直居中避免占据整个容器高度
+	btnBox := container.NewCenter(
+		container.NewHBox(
+			card.updateBtn,
+			card.editBtn,
+			card.deleteBtn,
+		),
 	)
 
 	content := container.NewBorder(
-		nil, nil, 
-		card.statusBar, 
-		btnBox, 
+		nil, nil,
+		card.statusBar,
+		btnBox,
 		container.NewPadded(textInfo),
 	)
 
@@ -248,7 +367,7 @@ func (card *SubscriptionCard) setupLayout() fyne.CanvasObject {
 func (card *SubscriptionCard) Update(sub *database.Subscription) {
 	card.sub = sub
 	card.nameLabel.SetText(sub.Label)
-	
+
 	urlDisplay := sub.URL
 	if len(urlDisplay) > 50 {
 		urlDisplay = urlDisplay[:47] + "..."
@@ -266,21 +385,31 @@ func (card *SubscriptionCard) Update(sub *database.Subscription) {
 	card.updateBtn.OnTapped = func() {
 		card.updateBtn.Disable()
 		go func() {
-			card.page.appState.SubscriptionManager.UpdateSubscriptionByID(sub.ID)
-			fyne.Do(func() { 
+			if card.page.appState.SubscriptionManager != nil {
+				if err := card.page.appState.SubscriptionManager.UpdateSubscriptionByID(sub.ID); err != nil {
+					fyne.Do(func() {
+						card.updateBtn.Enable()
+						dialog.ShowError(fmt.Errorf("更新订阅失败: %w", err), card.page.appState.Window)
+					})
+					return
+				}
+			}
+			// 更新绑定数据，自动刷新 UI
+			fyne.Do(func() {
 				card.updateBtn.Enable()
-				card.page.Refresh() 
+				card.page.Refresh()
 			})
 		}()
 	}
 
 	card.editBtn.OnTapped = card.showEditDialog
-	
+
 	card.deleteBtn.OnTapped = func() {
 		msg := fmt.Sprintf("确定删除订阅 '%s' 吗？\n下属的 %d 个节点将被移除。", sub.Label, nodeCount)
 		dialog.ShowConfirm("删除确认", msg, func(ok bool) {
 			if ok {
 				database.DeleteSubscription(sub.ID)
+				// 更新绑定数据，自动刷新 UI
 				card.page.Refresh()
 			}
 		}, card.page.appState.Window)
@@ -290,21 +419,29 @@ func (card *SubscriptionCard) Update(sub *database.Subscription) {
 func (card *SubscriptionCard) showEditDialog() {
 	urlEntry := widget.NewEntry()
 	urlEntry.SetText(card.sub.URL)
+	urlEntry.SetPlaceHolder("https://...")
 	labelEntry := widget.NewEntry()
 	labelEntry.SetText(card.sub.Label)
+	labelEntry.SetPlaceHolder("订阅名称")
 
 	items := []*widget.FormItem{
 		{Text: "名称", Widget: labelEntry},
 		{Text: "链接", Widget: urlEntry},
 	}
 
-	dialog.ShowForm("编辑订阅", "确认", "取消", items, func(ok bool) {
-		if ok {
-			// 基于唯一 ID 更新，即使 URL 相同也不会冲突
-			database.UpdateSubscriptionByID(card.sub.ID, urlEntry.Text, labelEntry.Text)
-			card.page.Refresh()
+	d := dialog.NewForm("编辑订阅", "确认", "取消", items, func(ok bool) {
+		if !ok || urlEntry.Text == "" {
+			return
 		}
+
+		// 基于唯一 ID 更新，即使 URL 相同也不会冲突
+		database.UpdateSubscriptionByID(card.sub.ID, urlEntry.Text, labelEntry.Text)
+		// 更新绑定数据，自动刷新 UI
+		card.page.Refresh()
 	}, card.page.appState.Window)
+
+	d.Resize(fyne.NewSize(420, 240))
+	d.Show()
 }
 
 func (card *SubscriptionCard) formatTime(t time.Time) string {

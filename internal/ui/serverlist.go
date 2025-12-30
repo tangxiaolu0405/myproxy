@@ -80,12 +80,13 @@ func (slp *ServerListPanel) SetStatusPanel(statusPanel *StatusPanel) {
 // Build 构建并返回服务器列表面板的 UI 组件。
 // 返回：包含返回按钮、操作按钮和服务器列表的容器组件
 func (slp *ServerListPanel) Build() fyne.CanvasObject {
-	// 返回按钮 - 返回主界面
-	backBtn := NewStyledButton("← 返回", nil, func() {
+	// 返回按钮 - 返回上一个页面
+	backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
 		if slp.appState != nil && slp.appState.MainWindow != nil {
-			slp.appState.MainWindow.ShowHomePage()
+			slp.appState.MainWindow.Back()
 		}
 	})
+	backBtn.Importance = widget.LowImportance
 
 	// 操作按钮 - 一键测速（符合 UI.md 设计）
 	testAllBtn := NewStyledButton("测速", theme.ViewRefreshIcon(), slp.onTestAll)
