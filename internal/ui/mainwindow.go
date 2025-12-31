@@ -1,14 +1,12 @@
 package ui
 
 import (
-	"encoding/json"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
-	"myproxy.com/p/internal/database"
+	"myproxy.com/p/internal/store"
 )
 
 // PageType 页面类型枚举
@@ -61,20 +59,13 @@ func (ps *PageStack) IsEmpty() bool {
 
 // LayoutConfig 存储窗口布局的配置信息，包括各区域的分割比例。
 // 这些配置会持久化到数据库中，以便在应用重启后恢复用户的布局偏好。
-type LayoutConfig struct {
-	SubscriptionOffset float64 `json:"subscriptionOffset"` // 订阅管理区域比例 (默认0.2 = 20%)
-	ServerListOffset   float64 `json:"serverListOffset"`   // 服务器列表比例 (默认0.6667 = 66.7% of 75%)
-	StatusOffset       float64 `json:"statusOffset"`       // 状态信息比例 (默认0.9375 = 93.75% of 80%, 即5% of total)
-}
+// 注意：此类型已迁移到 store 包，这里保留作为类型别名以便兼容。
+type LayoutConfig = store.LayoutConfig
 
 // DefaultLayoutConfig 返回默认的布局配置。
-// 默认布局：订阅管理 20%，服务器列表 50%，日志 25%，状态信息 5%。
+// 注意：此函数已迁移到 store 包，这里保留作为便捷函数。
 func DefaultLayoutConfig() *LayoutConfig {
-	return &LayoutConfig{
-		SubscriptionOffset: 0.2,    // 20%
-		ServerListOffset:   0.6667, // 66.7% of 75% = 50% of total
-		StatusOffset:       0.9375, // 93.75% of 80% = 75% of total, 剩余5%
-	}
+	return store.DefaultLayoutConfig()
 }
 
 // MainWindow 管理主窗口的布局和各个面板组件。
@@ -84,7 +75,6 @@ type MainWindow struct {
 	logsPanel         *LogsPanel
 	statusPanel       *StatusPanel
 	mainSplit         *container.Split // 主分割容器（服务器列表和日志，保留用于日志面板独立窗口等场景）
-	layoutConfig      *LayoutConfig    // 布局配置
 	pageStack         *PageStack      // 路由栈，用于管理页面导航历史
 	currentPage       PageType        // 当前页面类型
 
@@ -114,8 +104,7 @@ func NewMainWindow(appState *AppState) *MainWindow {
 		currentPage: PageTypeHome,
 	}
 
-	// 加载布局配置
-	mw.loadLayoutConfig()
+	// 布局配置由 Store 管理，无需在这里加载
 
 	// 创建各个面板
 	// mw.serverListPanel = NewServerListPanel(appState)
@@ -132,40 +121,20 @@ func NewMainWindow(appState *AppState) *MainWindow {
 	return mw
 }
 
-// loadLayoutConfig 从数据库加载布局配置
+// loadLayoutConfig 从 Store 加载布局配置（Store 已经管理，这里只是确保数据最新）
 func (mw *MainWindow) loadLayoutConfig() {
-	configJSON, err := database.GetLayoutConfig("layout_config")
-	if err != nil || configJSON == "" {
-		// 如果没有配置，使用默认配置并保存
-		mw.layoutConfig = DefaultLayoutConfig()
-		mw.saveLayoutConfig()
-		return
+	if mw.appState != nil && mw.appState.Store != nil && mw.appState.Store.Layout != nil {
+		_ = mw.appState.Store.Layout.Load()
 	}
-
-	// 解析配置
-	var config LayoutConfig
-	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
-		// 解析失败，使用默认配置
-		mw.layoutConfig = DefaultLayoutConfig()
-		mw.saveLayoutConfig()
-		return
-	}
-
-	mw.layoutConfig = &config
 }
 
-// saveLayoutConfig 保存布局配置到数据库
+// saveLayoutConfig 保存布局配置到 Store
 func (mw *MainWindow) saveLayoutConfig() {
-	if mw.layoutConfig == nil {
-		mw.layoutConfig = DefaultLayoutConfig()
-	}
-
-	configJSON, err := json.Marshal(mw.layoutConfig)
-	if err != nil {
+	if mw.appState == nil || mw.appState.Store == nil || mw.appState.Store.Layout == nil {
 		return
 	}
-
-	database.SetLayoutConfig("layout_config", string(configJSON))
+	config := mw.GetLayoutConfig()
+	_ = mw.appState.Store.Layout.Save(config)
 }
 
 // Build 构建并返回主窗口的 UI 组件树。
@@ -199,24 +168,31 @@ func (mw *MainWindow) Refresh() {
 	// 使用双向绑定，只需更新绑定数据，UI 会自动更新
 	if mw.appState != nil {
 		mw.appState.UpdateProxyStatus()
-		mw.appState.UpdateSubscriptionLabels() // 更新订阅标签绑定
+		// 订阅标签绑定由 Store 自动管理，无需手动更新
 	}
 }
 
-// SaveLayoutConfig 保存当前的布局配置到数据库。
+// SaveLayoutConfig 保存当前的布局配置到 Store。
 // 该方法会在窗口关闭时自动调用，以保存用户的布局偏好。
 func (mw *MainWindow) SaveLayoutConfig() {
-	if mw.mainSplit != nil {
-		mw.layoutConfig.ServerListOffset = mw.mainSplit.Offset
+	if mw.appState == nil || mw.appState.Store == nil || mw.appState.Store.Layout == nil {
+		return
 	}
-	// 布局比例由 customLayout 控制，配置保存到数据库
-	mw.saveLayoutConfig()
+	
+	config := mw.GetLayoutConfig()
+	if mw.mainSplit != nil {
+		config.ServerListOffset = mw.mainSplit.Offset
+	}
+	_ = mw.appState.Store.Layout.Save(config)
 }
 
 // GetLayoutConfig 返回当前的布局配置。
 // 返回：布局配置实例，如果未初始化则返回默认配置
 func (mw *MainWindow) GetLayoutConfig() *LayoutConfig {
-	return mw.layoutConfig
+	if mw.appState != nil && mw.appState.Store != nil && mw.appState.Store.Layout != nil {
+		return mw.appState.Store.Layout.Get()
+	}
+	return DefaultLayoutConfig()
 }
 
 // UpdateLogsCollapseState 更新日志折叠状态并调整布局
@@ -230,8 +206,9 @@ func (mw *MainWindow) UpdateLogsCollapseState(isCollapsed bool) {
 		mw.mainSplit.Offset = 0.99
 	} else {
 		// 展开：恢复保存的分割位置
-		if mw.layoutConfig != nil && mw.layoutConfig.ServerListOffset > 0 {
-			mw.mainSplit.Offset = mw.layoutConfig.ServerListOffset
+		config := mw.GetLayoutConfig()
+		if config != nil && config.ServerListOffset > 0 {
+			mw.mainSplit.Offset = config.ServerListOffset
 		} else {
 			mw.mainSplit.Offset = 0.6667
 		}
@@ -337,12 +314,12 @@ func (mw *MainWindow) showPage(pageType PageType, pageContent fyne.CanvasObject,
 	// 设置内容
 	mw.appState.Window.SetContent(pageContent)
 	
-	// 从数据库读取窗口大小并应用（在SetContent之后，避免内容的最小尺寸要求导致窗口变大）
+	// 从 Store 读取窗口大小并应用（在SetContent之后，避免内容的最小尺寸要求导致窗口变大）
 	defaultSize := fyne.NewSize(420, 520)
-	windowSize := LoadWindowSize(defaultSize)
+	windowSize := LoadWindowSize(mw.appState, defaultSize)
 	mw.appState.Window.Resize(windowSize)
-	// 保存当前窗口大小到数据库（确保保存的是设置后的尺寸）
-	SaveWindowSize(windowSize)
+	// 保存当前窗口大小到 Store（确保保存的是设置后的尺寸）
+	SaveWindowSize(mw.appState, windowSize)
 }
 
 // Back 返回到上一个页面（从路由栈中弹出）

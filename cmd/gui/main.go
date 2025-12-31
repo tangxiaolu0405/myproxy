@@ -5,41 +5,36 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 
-	"myproxy.com/p/internal/config"
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/logging"
 	"myproxy.com/p/internal/ui"
 )
 
 func main() {
-	// 配置文件路径（用于向后兼容，实际配置存储在数据库）
-	configPath := "./config.json"
-	if len(os.Args) > 1 {
-		configPath = os.Args[1]
+	// 获取工作目录（用于确定数据库路径）
+	workDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("获取工作目录失败: %v", err)
 	}
 
-	// 初始化数据库（必须在加载配置之前初始化）
-	dbPath := filepath.Join(filepath.Dir(configPath), "data", "myproxy.db")
+	// 初始化数据库（使用硬编码路径，避免暴露配置）
+	dbPath := filepath.Join(workDir, "data", "myproxy.db")
 	if err := database.InitDB(dbPath); err != nil {
 		log.Fatalf("初始化数据库失败: %v", err)
 	}
 	defer database.CloseDB()
 
-	// 从数据库加载配置，如果不存在则从 JSON 文件加载并迁移
-	cfg, err := loadConfigFromDB(configPath)
-	if err != nil {
-		log.Fatalf("加载配置失败: %v", err)
+	// 初始化默认配置（如果不存在则写入硬编码默认值）
+	if err := database.InitDefaultConfig(); err != nil {
+		log.Printf("初始化默认配置失败: %v", err)
+		// 继续执行，不影响应用启动
 	}
 
 	// 创建应用状态（先创建，logger稍后设置）
-	appState := ui.NewAppState(cfg, nil)
+	appState := ui.NewAppState(nil)
 
-	// 启动时从数据库同步服务器列表，保证 UI 有数据
-	appState.LoadServersFromDB()
-
-	// 初始化应用（创建Fyne应用和窗口）
+	// 初始化应用（创建Fyne应用和窗口，并加载 Store 数据）
 	appState.InitApp()
 
 	// 创建主窗口（此时LogsPanel已创建）
@@ -53,8 +48,19 @@ func main() {
 		}
 	}
 
-	// 初始化日志（使用数据库中的配置），并设置UI回调
-	logger, err := logging.NewLogger(cfg.LogFile, cfg.LogLevel == "debug", cfg.LogLevel, logCallback)
+	// 从 Store 读取日志配置并初始化 logger（使用硬编码默认值）
+	logFile := "myproxy.log"
+	logLevel := "info"
+	if appState.Store != nil && appState.Store.AppConfig != nil {
+		if file, err := appState.Store.AppConfig.GetWithDefault("logFile", "myproxy.log"); err == nil {
+			logFile = file
+		}
+		if level, err := appState.Store.AppConfig.GetWithDefault("logLevel", "info"); err == nil {
+			logLevel = level
+		}
+	}
+
+	logger, err := logging.NewLogger(logFile, logLevel == "debug", logLevel, logCallback)
 	if err != nil {
 		log.Fatalf("初始化日志失败: %v", err)
 	}
@@ -81,16 +87,13 @@ func main() {
 
 	// 设置窗口关闭事件，隐藏到托盘而不是退出
 	appState.Window.SetCloseIntercept(func() {
-		// 保存窗口大小到数据库
+		// 保存窗口大小到数据库（通过 Store）
 		if appState.Window != nil && appState.Window.Canvas() != nil {
-			ui.SaveWindowSize(appState.Window.Canvas().Size())
+			ui.SaveWindowSize(appState, appState.Window.Canvas().Size())
 		}
-		// 保存布局配置到数据库
+		// 保存布局配置到数据库（通过 Store）
 		mainWindow.SaveLayoutConfig()
-		// 保存应用配置到数据库
-		if err := saveConfigToDB(cfg); err != nil {
-			log.Printf("保存配置到数据库失败: %v", err)
-		}
+		// 配置已由 Store 自动管理，无需手动保存
 		// 隐藏窗口而不是关闭（Fyne 会自动处理 Dock 图标点击显示窗口）
 		appState.Window.Hide()
 	})
@@ -100,67 +103,4 @@ func main() {
 	appState.Window.Show()
 	appState.App.Run()
 	fmt.Println("应用运行结束")
-}
-
-// loadConfigFromDB 从数据库加载配置，如果不存在则从 JSON 文件加载并迁移到数据库。
-func loadConfigFromDB(configPath string) (*config.Config, error) {
-	// 尝试从数据库加载配置
-	logLevel, _ := database.GetAppConfigWithDefault("logLevel", "")
-	logFile, _ := database.GetAppConfigWithDefault("logFile", "")
-	autoProxyEnabledStr, _ := database.GetAppConfigWithDefault("autoProxyEnabled", "")
-	autoProxyPortStr, _ := database.GetAppConfigWithDefault("autoProxyPort", "")
-
-	// 如果数据库中有配置，使用数据库配置
-	if logLevel != "" || logFile != "" || autoProxyEnabledStr != "" || autoProxyPortStr != "" {
-		cfg := config.DefaultConfig()
-		if logLevel != "" {
-			cfg.LogLevel = logLevel
-		}
-		if logFile != "" {
-			cfg.LogFile = logFile
-		}
-		if autoProxyEnabledStr != "" {
-			if enabled, err := strconv.ParseBool(autoProxyEnabledStr); err == nil {
-				cfg.AutoProxyEnabled = enabled
-			}
-		}
-		if autoProxyPortStr != "" {
-			// 允许任意端口值，不进行有效性检查（用户可根据实际情况选择端口）
-			if port, err := strconv.Atoi(autoProxyPortStr); err == nil {
-				cfg.AutoProxyPort = port
-			}
-		}
-		return cfg, nil
-	}
-
-	// 数据库中没有配置，从 JSON 文件加载（向后兼容）
-	cfg, err := config.LoadConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	// 将配置迁移到数据库
-	if err := saveConfigToDB(cfg); err != nil {
-		log.Printf("迁移配置到数据库失败: %v", err)
-		// 即使迁移失败，也返回配置，保证应用可以启动
-	}
-
-	return cfg, nil
-}
-
-// saveConfigToDB 将配置保存到数据库。
-func saveConfigToDB(cfg *config.Config) error {
-	if err := database.SetAppConfig("logLevel", cfg.LogLevel); err != nil {
-		return err
-	}
-	if err := database.SetAppConfig("logFile", cfg.LogFile); err != nil {
-		return err
-	}
-	if err := database.SetAppConfig("autoProxyEnabled", strconv.FormatBool(cfg.AutoProxyEnabled)); err != nil {
-		return err
-	}
-	if err := database.SetAppConfig("autoProxyPort", strconv.Itoa(cfg.AutoProxyPort)); err != nil {
-		return err
-	}
-	return nil
 }

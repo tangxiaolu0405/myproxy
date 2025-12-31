@@ -17,27 +17,25 @@ import (
 
 // SubscriptionPage 订阅管理页面
 type SubscriptionPage struct {
-	appState      *AppState
-	subscriptions []*database.Subscription
-	subscriptionsBinding binding.UntypedList // 订阅列表绑定
-	list          *widget.List
-	content       fyne.CanvasObject
+	appState *AppState
+	list     *widget.List
+	content  fyne.CanvasObject
 }
 
 // NewSubscriptionPage 创建订阅管理页面
 func NewSubscriptionPage(appState *AppState) *SubscriptionPage {
 	sp := &SubscriptionPage{
-		appState:            appState,
-		subscriptionsBinding: binding.NewUntypedList(),
+		appState: appState,
 	}
-	sp.loadSubscriptions()
 	
-	// 监听绑定数据变化，自动刷新列表
-	sp.subscriptionsBinding.AddListener(binding.NewDataListener(func() {
-		if sp.list != nil {
-			sp.list.Refresh()
-		}
-	}))
+	// 监听 Store 的订阅绑定数据变化，自动刷新列表
+	if appState != nil && appState.Store != nil && appState.Store.Subscriptions != nil {
+		appState.Store.Subscriptions.SubscriptionsBinding.AddListener(binding.NewDataListener(func() {
+			if sp.list != nil {
+				sp.list.Refresh()
+			}
+		}))
+	}
 	
 	return sp
 }
@@ -92,32 +90,15 @@ func (sp *SubscriptionPage) Build() fyne.CanvasObject {
 	return sp.content
 }
 
+// loadSubscriptions 从 Store 加载订阅（Store 已经维护了绑定，这里只是确保数据最新）
 func (sp *SubscriptionPage) loadSubscriptions() {
-	subscriptions, err := database.GetAllSubscriptions()
-	if err != nil {
-		sp.subscriptions = []*database.Subscription{}
-	} else {
-		sp.subscriptions = subscriptions
+	if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Subscriptions != nil {
+		_ = sp.appState.Store.Subscriptions.Load()
 	}
-	
-	// 更新绑定数据，触发 UI 自动刷新
-	sp.updateSubscriptionsBinding()
-}
-
-// updateSubscriptionsBinding 更新订阅列表绑定数据
-func (sp *SubscriptionPage) updateSubscriptionsBinding() {
-	// 将订阅列表转换为 any 类型切片
-	items := make([]any, len(sp.subscriptions))
-	for i, sub := range sp.subscriptions {
-		items[i] = sub
-	}
-	
-	// 使用 Set 方法替换整个列表，这会触发绑定更新
-	_ = sp.subscriptionsBinding.Set(items)
 }
 
 func (sp *SubscriptionPage) getSubscriptionCount() int {
-	return len(sp.subscriptions)
+	return sp.appState.Store.Subscriptions.GetAllNodeCount()
 }
 
 func (sp *SubscriptionPage) createSubscriptionItem() fyne.CanvasObject {
@@ -125,11 +106,15 @@ func (sp *SubscriptionPage) createSubscriptionItem() fyne.CanvasObject {
 }
 
 func (sp *SubscriptionPage) updateSubscriptionItem(id widget.ListItemID, obj fyne.CanvasObject) {
-	if id < 0 || id >= len(sp.subscriptions) {
+	var subscriptions []*database.Subscription
+	if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Subscriptions != nil {
+		subscriptions = sp.appState.Store.Subscriptions.GetAll()
+	}
+	if id < 0 || id >= len(subscriptions) {
 		return
 	}
 	card := obj.(*SubscriptionCard)
-	card.Update(sp.subscriptions[id])
+	card.Update(subscriptions[id])
 }
 
 func (sp *SubscriptionPage) Refresh() {
@@ -155,16 +140,25 @@ func (sp *SubscriptionPage) showAddSubscriptionDialog() {
 		}
 
 		go func() {
-			// 调用创建新订阅的逻辑（不根据URL去重）
-			_, err := database.AddOrUpdateSubscription(urlEntry.Text, labelEntry.Text)
-			if err != nil {
-				fyne.Do(func() { dialog.ShowError(err, sp.appState.Window) })
-				return
+			// 通过 Store 添加订阅（会自动更新数据库和绑定）
+			if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Subscriptions != nil {
+				_, err := sp.appState.Store.Subscriptions.Add(urlEntry.Text, labelEntry.Text)
+				if err != nil {
+					fyne.Do(func() { dialog.ShowError(err, sp.appState.Window) })
+					return
+				}
+			} else {
+				// 降级方案：直接调用数据库
+				_, err := database.AddOrUpdateSubscription(urlEntry.Text, labelEntry.Text)
+				if err != nil {
+					fyne.Do(func() { dialog.ShowError(err, sp.appState.Window) })
+					return
+				}
 			}
 
 			// 立即执行一次抓取
-			if sp.appState.SubscriptionManager != nil {
-				sp.appState.SubscriptionManager.FetchSubscription(urlEntry.Text, labelEntry.Text)
+			if sp.appState != nil && sp.appState.subscriptionManager != nil {
+				sp.appState.subscriptionManager.FetchSubscription(urlEntry.Text, labelEntry.Text)
 			}
 
 			// 更新绑定数据，自动刷新 UI
@@ -177,7 +171,11 @@ func (sp *SubscriptionPage) showAddSubscriptionDialog() {
 }
 
 func (sp *SubscriptionPage) batchUpdateSubscriptions() {
-	if len(sp.subscriptions) == 0 {
+	var subscriptions []*database.Subscription
+	if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Subscriptions != nil {
+		subscriptions = sp.appState.Store.Subscriptions.GetAll()
+	}
+	if len(subscriptions) == 0 {
 		return
 	}
 	dialog.ShowConfirm("批量更新", "确认更新所有订阅列表？", func(ok bool) {
@@ -185,9 +183,13 @@ func (sp *SubscriptionPage) batchUpdateSubscriptions() {
 			return
 		}
 		go func() {
-			for _, sub := range sp.subscriptions {
-				if sp.appState.SubscriptionManager != nil {
-					if err := sp.appState.SubscriptionManager.UpdateSubscriptionByID(sub.ID); err != nil {
+			var subscriptions []*database.Subscription
+			if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Subscriptions != nil {
+				subscriptions = sp.appState.Store.Subscriptions.GetAll()
+			}
+			for _, sub := range subscriptions {
+				if sp.appState != nil && sp.appState.subscriptionManager != nil {
+					if err := sp.appState.subscriptionManager.UpdateSubscriptionByID(sub.ID); err != nil {
 						fyne.Do(func() {
 							dialog.ShowError(fmt.Errorf("更新订阅失败: %w", err), sp.appState.Window)
 						})
@@ -285,7 +287,12 @@ func (card *SubscriptionCard) Update(sub *database.Subscription) {
 	}
 	card.urlLabel.SetText(urlDisplay)
 
-	nodeCount, _ := database.GetServerCountBySubscriptionID(sub.ID)
+	nodeCount := 0
+	if card.page != nil && card.page.appState != nil && card.page.appState.Store != nil && card.page.appState.Store.Subscriptions != nil {
+		nodeCount, _ = card.page.appState.Store.Subscriptions.GetServerCount(sub.ID)
+	} else {
+		nodeCount, _ = database.GetServerCountBySubscriptionID(sub.ID)
+	}
 	lastUpdate := "从未更新"
 	if !sub.UpdatedAt.IsZero() {
 		lastUpdate = card.formatTime(sub.UpdatedAt)
@@ -296,14 +303,18 @@ func (card *SubscriptionCard) Update(sub *database.Subscription) {
 	card.updateBtn.OnTapped = func() {
 		card.updateBtn.Disable()
 		go func() {
-			if card.page.appState.SubscriptionManager != nil {
-				if err := card.page.appState.SubscriptionManager.UpdateSubscriptionByID(sub.ID); err != nil {
+			if card.page != nil && card.page.appState != nil && card.page.appState.subscriptionManager != nil {
+				if err := card.page.appState.subscriptionManager.UpdateSubscriptionByID(sub.ID); err != nil {
 					fyne.Do(func() {
 						card.updateBtn.Enable()
 						dialog.ShowError(fmt.Errorf("更新订阅失败: %w", err), card.page.appState.Window)
 					})
 					return
 				}
+			}
+			// 重新加载 Store 数据（会自动更新绑定）
+			if card.page.appState != nil && card.page.appState.Store != nil && card.page.appState.Store.Subscriptions != nil {
+				_ = card.page.appState.Store.Subscriptions.Load()
 			}
 			// 更新绑定数据，自动刷新 UI
 			fyne.Do(func() {
@@ -319,7 +330,16 @@ func (card *SubscriptionCard) Update(sub *database.Subscription) {
 		msg := fmt.Sprintf("确定删除订阅 '%s' 吗？\n下属的 %d 个节点将被移除。", sub.Label, nodeCount)
 		dialog.ShowConfirm("删除确认", msg, func(ok bool) {
 			if ok {
-				database.DeleteSubscription(sub.ID)
+				// 通过 Store 删除订阅（会自动更新数据库和绑定）
+				if card.page.appState != nil && card.page.appState.Store != nil && card.page.appState.Store.Subscriptions != nil {
+					if err := card.page.appState.Store.Subscriptions.Delete(sub.ID); err != nil {
+						dialog.ShowError(err, card.page.appState.Window)
+						return
+					}
+				} else {
+					// 降级方案：直接调用数据库
+					database.DeleteSubscription(sub.ID)
+				}
 				// 更新绑定数据，自动刷新 UI
 				card.page.Refresh()
 			}
@@ -345,10 +365,18 @@ func (card *SubscriptionCard) showEditDialog() {
 			return
 		}
 
-		// 基于唯一 ID 更新，即使 URL 相同也不会冲突
+	// 通过 Store 更新订阅（会自动更新数据库和绑定）
+	if card.page.appState != nil && card.page.appState.Store != nil && card.page.appState.Store.Subscriptions != nil {
+		if err := card.page.appState.Store.Subscriptions.Update(card.sub.ID, urlEntry.Text, labelEntry.Text); err != nil {
+			dialog.ShowError(err, card.page.appState.Window)
+			return
+		}
+	} else {
+		// 降级方案：直接调用数据库
 		database.UpdateSubscriptionByID(card.sub.ID, urlEntry.Text, labelEntry.Text)
-		// 更新绑定数据，自动刷新 UI
-		card.page.Refresh()
+	}
+	// 更新绑定数据，自动刷新 UI
+	card.page.Refresh()
 	}, card.page.appState.Window)
 
 	d.Resize(fyne.NewSize(420, 240))

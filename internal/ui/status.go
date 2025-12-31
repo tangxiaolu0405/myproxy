@@ -255,18 +255,16 @@ func (sp *StatusPanel) Refresh() {
 
 // updateSystemProxyPort 更新系统代理管理器的端口
 func (sp *StatusPanel) updateSystemProxyPort() {
-	if sp.appState == nil || sp.appState.Config == nil {
+	if sp.appState == nil {
 		return
 	}
 
-	// 从配置或 xray 实例获取端口
+	// 从 xray 实例获取端口
 	proxyPort := 10080 // 默认端口
 	if sp.appState.XrayInstance != nil && sp.appState.XrayInstance.IsRunning() {
 		if port := sp.appState.XrayInstance.GetPort(); port > 0 {
 			proxyPort = port
 		}
-	} else if sp.appState.Config.AutoProxyPort > 0 {
-		proxyPort = sp.appState.Config.AutoProxyPort
 	}
 
 	// 更新系统代理管理器
@@ -275,25 +273,27 @@ func (sp *StatusPanel) updateSystemProxyPort() {
 
 // updateDelayLabel 根据当前选中服务器更新延迟显示（符合 UI.md 设计：32ms）
 func (sp *StatusPanel) updateDelayLabel() {
-	if sp.delayLabel == nil || sp.appState == nil || sp.appState.ServerManager == nil {
+	if sp.delayLabel == nil || sp.appState == nil {
 		return
 	}
 
 	delayText := "-"
-	if sp.appState.SelectedServerID != "" {
-		if srv, err := sp.appState.ServerManager.GetServer(sp.appState.SelectedServerID); err == nil && srv != nil {
-			if srv.Delay > 0 {
+	// 从 Store 获取选中的节点
+	if sp.appState.Store != nil && sp.appState.Store.Nodes != nil {
+		selectedNode := sp.appState.Store.Nodes.GetSelected()
+		if selectedNode != nil {
+			if selectedNode.Delay > 0 {
 				// 根据延迟值设置颜色指示（UI.md 要求：绿色<100ms，黄色100-200ms，红色>200ms）
 				var colorIndicator string
-				if srv.Delay < 100 {
+				if selectedNode.Delay < 100 {
 					colorIndicator = "🟢"
-				} else if srv.Delay <= 200 {
+				} else if selectedNode.Delay <= 200 {
 					colorIndicator = "🟡"
 				} else {
 					colorIndicator = "🔴"
 				}
-				delayText = fmt.Sprintf("%s %dms", colorIndicator, srv.Delay)
-			} else if srv.Delay < 0 {
+				delayText = fmt.Sprintf("%s %dms", colorIndicator, selectedNode.Delay)
+			} else if selectedNode.Delay < 0 {
 				delayText = "🔴 超时"
 			} else {
 				delayText = "⚪ N/A"
@@ -400,8 +400,6 @@ func (sp *StatusPanel) applySystemProxyMode(fullModeName string) error {
 				if port := sp.appState.XrayInstance.GetPort(); port > 0 {
 					proxyPort = port
 				}
-			} else if sp.appState.Config != nil && sp.appState.Config.AutoProxyPort > 0 {
-				proxyPort = sp.appState.Config.AutoProxyPort
 			}
 			logMessage = fmt.Sprintf("已自动配置系统代理: 127.0.0.1:%d", proxyPort)
 		} else {
@@ -420,8 +418,6 @@ func (sp *StatusPanel) applySystemProxyMode(fullModeName string) error {
 				if port := sp.appState.XrayInstance.GetPort(); port > 0 {
 					proxyPort = port
 				}
-			} else if sp.appState.Config != nil && sp.appState.Config.AutoProxyPort > 0 {
-				proxyPort = sp.appState.Config.AutoProxyPort
 			}
 			logMessage = fmt.Sprintf("已设置环境变量代理: socks5://127.0.0.1:%d (已写入shell配置文件)", proxyPort)
 		} else {

@@ -2,33 +2,30 @@ package ui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/theme"
-	"myproxy.com/p/internal/config"
-	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/logging"
 	"myproxy.com/p/internal/ping"
 	"myproxy.com/p/internal/server"
+	"myproxy.com/p/internal/store"
 	"myproxy.com/p/internal/subscription"
 	"myproxy.com/p/internal/xray"
 )
 
-// AppState 管理应用的整体状态，包括配置、管理器、日志和 UI 组件。
+// AppState 管理应用的整体状态，包括管理器、日志和 UI 组件。
 // 它作为应用的核心状态容器，协调各个组件之间的交互。
 type AppState struct {
-	Config              *config.Config
-	ServerManager       *server.ServerManager
-	SubscriptionManager *subscription.SubscriptionManager
-	PingManager         *ping.PingManager
-	Logger              *logging.Logger
-	App                 fyne.App
-	Window              fyne.Window
-	SelectedServerID    string
+	PingManager *ping.PingManager
+	Logger      *logging.Logger
+	App         fyne.App
+	Window      fyne.Window
+
+	// Store - 数据层核心，管理所有数据和双向绑定
+	Store *store.Store
 
 	// Xray 实例 - 用于 xray-core 代理
 	XrayInstance *xray.XrayInstance
@@ -38,68 +35,51 @@ type AppState struct {
 	PortBinding        binding.String // 端口文本
 	ServerNameBinding  binding.String // 服务器名称文本
 
-	// 订阅标签绑定 - 用于订阅管理面板自动更新
-	SubscriptionLabelsBinding binding.StringList // 订阅标签列表
-
 	// 主窗口引用 - 用于刷新日志面板
 	MainWindow *MainWindow
 
 	// 日志面板引用 - 用于追加日志
 	LogsPanel *LogsPanel
+
+	// 内部 SubscriptionManager（仅用于订阅功能，不暴露为公共字段）
+	subscriptionManager *subscription.SubscriptionManager
 }
 
 // NewAppState 创建并初始化新的应用状态。
 // 参数：
-//   - cfg: 应用配置
 //   - logger: 日志记录器
 //
 // 返回：初始化后的应用状态实例
-func NewAppState(cfg *config.Config, logger *logging.Logger) *AppState {
-	serverManager := server.NewServerManager(cfg)
-	subscriptionManager := subscription.NewSubscriptionManager(serverManager)
-	pingManager := ping.NewPingManager(serverManager)
+func NewAppState(logger *logging.Logger) *AppState {
+	// 创建 Store 实例
+	dataStore := store.NewStore()
 
 	// 创建绑定数据
 	proxyStatusBinding := binding.NewString()
 	portBinding := binding.NewString()
 	serverNameBinding := binding.NewString()
-	subscriptionLabelsBinding := binding.NewStringList()
+
+	// 创建临时 ServerManager（用于 PingManager 和 SubscriptionManager）
+	// TODO: 重构 PingManager 和 SubscriptionManager 使其直接使用 Store
+	tempServerManager := server.NewServerManager(nil)
+	pingManager := ping.NewPingManager(tempServerManager)
+	subscriptionManager := subscription.NewSubscriptionManager(tempServerManager)
 
 	appState := &AppState{
-		Config:                    cfg,
-		ServerManager:             serverManager,
-		SubscriptionManager:       subscriptionManager,
-		PingManager:               pingManager,
-		Logger:                    logger,
-		SelectedServerID:          "",
-		ProxyStatusBinding:        proxyStatusBinding,
-		PortBinding:               portBinding,
-		ServerNameBinding:         serverNameBinding,
-		SubscriptionLabelsBinding: subscriptionLabelsBinding,
+		PingManager:        pingManager,
+		Logger:             logger,
+		Store:              dataStore,
+		ProxyStatusBinding: proxyStatusBinding,
+		PortBinding:        portBinding,
+		ServerNameBinding:  serverNameBinding,
+		// 内部 SubscriptionManager（仅用于订阅功能，不暴露为字段）
+		subscriptionManager: subscriptionManager,
 	}
 
-	// 注意：不在构造函数中初始化绑定数据
-	// 绑定数据需要在 Fyne 应用初始化后才能使用
-	// 将在 InitApp() 之后初始化
+	// 注意：Store 数据加载将在 InitApp() 之后进行
+	// 因为 Fyne 绑定需要在应用初始化后才能使用
 
 	return appState
-}
-
-// LoadServersFromDB 将数据库中的服务器同步到内存配置，并更新选中状态。
-func (a *AppState) LoadServersFromDB() {
-	if a.ServerManager == nil {
-		return
-	}
-
-	if err := a.ServerManager.LoadServersFromDB(); err != nil {
-		if a.Logger != nil {
-			a.Logger.Error("加载服务器列表失败: %v", err)
-		}
-		return
-	}
-
-	// 同步选中服务器ID
-	a.SelectedServerID = a.Config.SelectedServerID
 }
 
 // updateStatusBindings 更新状态绑定数据
@@ -112,12 +92,9 @@ func (a *AppState) updateStatusBindings() {
 	if a.XrayInstance != nil && a.XrayInstance.IsRunning() {
 		// xray-core 代理正在运行
 		isRunning = true
-		// 优先从 xray 实例获取端口
+		// 从 xray 实例获取端口
 		if a.XrayInstance.GetPort() > 0 {
 			proxyPort = a.XrayInstance.GetPort()
-		} else if a.Config != nil && a.Config.AutoProxyPort > 0 {
-			// 如果实例中没有端口，从配置中获取
-			proxyPort = a.Config.AutoProxyPort
 		} else {
 			proxyPort = 10080 // 默认端口
 		}
@@ -138,13 +115,13 @@ func (a *AppState) updateStatusBindings() {
 	}
 
 	// 更新当前服务器（符合 UI.md 设计：🌐 节点: US - LA - 32ms）
-	if a.ServerManager != nil && a.SelectedServerID != "" {
-		server, err := a.ServerManager.GetServer(a.SelectedServerID)
-		if err == nil && server != nil {
+	if a.Store != nil && a.Store.Nodes != nil {
+		selectedNode := a.Store.Nodes.GetSelected()
+		if selectedNode != nil {
 			// 使用节点名称，格式更简洁
-			a.ServerNameBinding.Set(fmt.Sprintf("🌐 节点: %s", server.Name))
+			a.ServerNameBinding.Set(fmt.Sprintf("🌐 节点: %s", selectedNode.Name))
 		} else {
-			a.ServerNameBinding.Set("🌐 节点: 未知")
+			a.ServerNameBinding.Set("🌐 节点: 无")
 		}
 	} else {
 		a.ServerNameBinding.Set("🌐 节点: 无")
@@ -174,54 +151,29 @@ func (a *AppState) InitApp() {
 		fmt.Println("警告: 应用图标创建失败")
 	}
 	
-	// 从数据库加载主题配置，默认使用黑色主题
+	// 从 Store 加载主题配置，默认使用黑色主题
 	themeVariant := theme.VariantDark
-	if themeStr, err := database.GetAppConfigWithDefault("theme", "dark"); err == nil && themeStr == "light" {
-		themeVariant = theme.VariantLight
+	if a.Store != nil && a.Store.AppConfig != nil {
+		if themeStr, err := a.Store.AppConfig.GetWithDefault("theme", "dark"); err == nil && themeStr == "light" {
+			themeVariant = theme.VariantLight
+		}
 	}
 	a.App.Settings().SetTheme(NewMonochromeTheme(themeVariant))
-	a.Window = a.App.NewWindow("SOCKS5 代理客户端")
-	// 从数据库读取窗口大小，如果没有则使用默认值
+	a.Window = a.App.NewWindow("myproxy")
+	// 从 Store 读取窗口大小，如果没有则使用默认值
 	defaultSize := fyne.NewSize(420, 520)
-	windowSize := LoadWindowSize(defaultSize)
+	windowSize := LoadWindowSize(a, defaultSize)
 	a.Window.Resize(windowSize)
 
 	// Fyne 应用初始化后，可以初始化绑定数据
+	// 先加载 Store 数据（必须在 Fyne 应用初始化后）
+	if a.Store != nil {
+		a.Store.LoadAll()
+	}
+	
 	a.updateStatusBindings()
-	a.updateSubscriptionLabels()
 
 	// 注意：Logger的回调需要在LogsPanel创建后设置（在NewMainWindow之后）
-}
-
-// updateSubscriptionLabels 更新订阅标签绑定数据
-func (a *AppState) updateSubscriptionLabels() {
-	// 从数据库获取所有订阅
-	subscriptions, err := database.GetAllSubscriptions()
-	if err != nil {
-		// 如果获取失败，记录日志并设置为空列表（统一错误处理）
-		if a.Logger != nil {
-			a.Logger.Error("获取订阅列表失败: %v", err)
-		}
-		a.SubscriptionLabelsBinding.Set([]string{})
-		return
-	}
-
-	// 提取标签列表
-	labels := make([]string, 0, len(subscriptions))
-	for _, sub := range subscriptions {
-		if sub.Label != "" {
-			labels = append(labels, sub.Label)
-		}
-	}
-
-	// 更新绑定数据
-	a.SubscriptionLabelsBinding.Set(labels)
-}
-
-// UpdateSubscriptionLabels 从数据库获取所有订阅并更新标签绑定数据。
-// 该方法会触发订阅管理面板的自动更新，使 UI 能够反映最新的订阅列表。
-func (a *AppState) UpdateSubscriptionLabels() {
-	a.updateSubscriptionLabels()
 }
 
 // AppendLog 追加一条日志到日志面板（全局接口）
@@ -244,40 +196,24 @@ func (a *AppState) AppendLog(level, logType, message string) {
 	}
 }
 
-// LoadWindowSize 从数据库加载窗口大小，如果不存在则返回默认值
+// LoadWindowSize 从 Store 加载窗口大小，如果不存在则返回默认值
 // 参数：
+//   - appState: 应用状态（包含 Store）
 //   - defaultSize: 默认窗口大小
 // 返回：窗口大小
-func LoadWindowSize(defaultSize fyne.Size) fyne.Size {
-	sizeStr, err := database.GetAppConfig("windowSize")
-	if err != nil || sizeStr == "" {
-		return defaultSize
+func LoadWindowSize(appState *AppState, defaultSize fyne.Size) fyne.Size {
+	if appState != nil && appState.Store != nil && appState.Store.AppConfig != nil {
+		return appState.Store.AppConfig.GetWindowSize(defaultSize)
 	}
-	
-	// 解析格式：width,height
-	parts := strings.Split(sizeStr, ",")
-	if len(parts) != 2 {
-		return defaultSize
-	}
-	
-	width, err1 := strconv.ParseFloat(parts[0], 32)
-	height, err2 := strconv.ParseFloat(parts[1], 32)
-	if err1 != nil || err2 != nil {
-		return defaultSize
-	}
-
-	fmt.Println("窗口大小: ", width, height)
-	fmt.Println("默认窗口大小: ", defaultSize.Width, defaultSize.Height)
-	return fyne.NewSize(float32(width), float32(height))
+	return defaultSize
 }
 
-// SaveWindowSize 保存窗口大小到数据库
+// SaveWindowSize 保存窗口大小到 Store
 // 参数：
+//   - appState: 应用状态（包含 Store）
 //   - size: 窗口大小
-func SaveWindowSize(size fyne.Size) {
-	sizeStr := fmt.Sprintf("%.0f,%.0f", float64(size.Width), float64(size.Height))
-	if err := database.SetAppConfig("windowSize", sizeStr); err != nil {
-		// 静默失败，不影响用户体验
-		_ = err
+func SaveWindowSize(appState *AppState, size fyne.Size) {
+	if appState != nil && appState.Store != nil && appState.Store.AppConfig != nil {
+		_ = appState.Store.AppConfig.SaveWindowSize(size)
 	}
 }

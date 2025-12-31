@@ -150,6 +150,33 @@ func createTables() error {
 	return nil
 }
 
+// InitDefaultConfig 初始化默认配置到数据库。
+// 如果配置已存在则跳过，避免覆盖用户设置。
+// 使用硬编码默认值，避免暴露敏感信息。
+func InitDefaultConfig() error {
+	// 定义默认配置（硬编码，避免暴露）
+	defaultConfigs := map[string]string{
+		"logLevel":          "info",  // 日志级别：info（生产环境默认）
+		"logFile":           "myproxy.log", // 日志文件
+		"theme":             "dark",  // 主题：dark（默认黑色主题）
+		"autoProxyEnabled":  "false", // 自动代理：默认关闭
+		"autoProxyPort":     "1080",  // 自动代理端口：默认1080
+		"selectedServerID":  "",      // 选中的服务器ID：默认空
+		"selectedSubscriptionID": "0", // 选中的订阅ID：默认0（全部）
+	}
+
+	// 遍历默认配置，如果不存在则写入
+	for key, defaultValue := range defaultConfigs {
+		// 使用 GetAppConfigWithDefault 会自动写入默认值（如果不存在）
+		_, err := GetAppConfigWithDefault(key, defaultValue)
+		if err != nil {
+			return fmt.Errorf("初始化配置 %s 失败: %w", key, err)
+		}
+	}
+
+	return nil
+}
+
 // migrateTables 迁移数据库表，添加新字段（如果不存在）
 func migrateTables() error {
 	// 检查并添加新字段
@@ -654,6 +681,27 @@ func UpdateServerDelay(id string, delay int) error {
 	if err != nil {
 		return fmt.Errorf("更新服务器延迟失败: %w", err)
 	}
+	return nil
+}
+
+// SelectServer 选中指定的服务器（取消其他服务器的选中状态）。
+// 参数：
+//   - id: 要选中的服务器 ID
+//
+// 返回：错误（如果有）
+func SelectServer(id string) error {
+	// 先取消所有服务器的选中状态
+	_, err := DB.Exec("UPDATE servers SET selected = 0")
+	if err != nil {
+		return fmt.Errorf("取消选中状态失败: %w", err)
+	}
+
+	// 选中指定的服务器
+	_, err = DB.Exec("UPDATE servers SET selected = 1 WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("选中服务器失败: %w", err)
+	}
+
 	return nil
 }
 

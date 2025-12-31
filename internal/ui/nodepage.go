@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -20,63 +19,41 @@ import (
 // 它支持服务器选择、延迟测试、代理启动/停止等功能，并提供右键菜单操作。
 type NodePage struct {
 	appState       *AppState
-	nodes          []*database.Node
-	selectedNode   *database.Node
-	selectedIndex  int
-	nodesBinding   binding.UntypedList // 服务器列表绑定
 	list           *widget.List        // 列表组件
 	content        fyne.CanvasObject   // 内容容器
 
 	// 搜索与过滤相关
 	searchEntry *widget.Entry // 节点搜索输入框
 	searchText  string        // 当前搜索关键字（小写）
+
+	// UI 组件
+	selectedServerLabel *widget.Label // 当前选中服务器名标签
 }
 
 // NewNodePage 创建节点管理页面
 func NewNodePage(appState *AppState) *NodePage {
 	np := &NodePage{
-		appState:      appState,
-		nodesBinding: binding.NewUntypedList(),
+		appState: appState,
 	}
-	np.loadNodes()
 	
-	// 监听绑定数据变化，自动刷新列表
-	np.nodesBinding.AddListener(binding.NewDataListener(func() {
-		if np.list != nil {
-			np.list.Refresh()
-		}
-	}))
+	// 监听 Store 的节点绑定数据变化，自动刷新列表
+	if appState != nil && appState.Store != nil && appState.Store.Nodes != nil {
+		appState.Store.Nodes.NodesBinding.AddListener(binding.NewDataListener(func() {
+			if np.list != nil {
+				np.list.Refresh()
+			}
+		}))
+	}
 	
 	return np
 }
 
 
+// loadNodes 从 Store 加载节点（Store 已经维护了绑定，这里只是确保数据最新）
 func (np *NodePage) loadNodes() {
-	nodes, err := database.GetAllServers()
-	if err != nil {
-		np.nodes = []*database.Node{}
-	} else {
-		// 转换为指针切片
-		np.nodes = make([]*database.Node, len(nodes))
-		for i := range nodes {
-			np.nodes[i] = &nodes[i]
-		}
+	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
+		_ = np.appState.Store.Nodes.Load()
 	}
-	
-	// 更新绑定数据，触发 UI 自动刷新
-	np.updateNodesBinding()
-}
-
-// updateNodesBinding 更新节点列表绑定数据
-func (np *NodePage) updateNodesBinding() {
-	// 将节点列表转换为 any 类型切片
-	items := make([]any, len(np.nodes))
-	for i, node := range np.nodes {
-		items[i] = node
-	}
-	
-	// 使用 Set 方法替换整个列表，这会触发绑定更新
-	_ = np.nodesBinding.Set(items)
 }
 
 
@@ -98,7 +75,15 @@ func (np *NodePage) Build() fyne.CanvasObject {
 	})
 	backBtn.Importance = widget.LowImportance
 
-	// 2. 操作按钮组（参考 subscriptionpage 风格）
+	// 2. 当前选中服务器名标签（在测速按钮左侧）
+	np.selectedServerLabel = widget.NewLabel("")
+	np.selectedServerLabel.Alignment = fyne.TextAlignLeading
+	np.selectedServerLabel.TextStyle = fyne.TextStyle{Bold: true}
+	np.selectedServerLabel.Truncation = fyne.TextTruncateEllipsis // 文本过长时显示省略号
+	np.selectedServerLabel.Wrapping = fyne.TextTruncate // 不换行，截断
+	np.updateSelectedServerLabel() // 初始化标签内容
+
+	// 3. 操作按钮组（参考 subscriptionpage 风格）
 	testAllBtn := widget.NewButtonWithIcon("测速", theme.ViewRefreshIcon(), np.onTestAll)
 	testAllBtn.Importance = widget.LowImportance
 
@@ -109,23 +94,15 @@ func (np *NodePage) Build() fyne.CanvasObject {
 	})
 	subscriptionBtn.Importance = widget.LowImportance
 
-	refreshBtn := widget.NewButtonWithIcon("刷新", theme.ViewRefreshIcon(), func() {
-		if np.appState != nil && np.appState.ServerManager != nil {
-			np.Refresh()
-			if np.appState.Window != nil {
-				np.appState.Window.SetTitle("列表已刷新")
-			}
-		}
-	})
-	refreshBtn.Importance = widget.LowImportance
-
-	// 3. 头部栏布局（返回按钮 + 操作按钮）
+	// 4. 头部栏布局（返回按钮 + 选中服务器标签 + 操作按钮）
+	// 使用固定宽度的容器限制标签，给标签足够的显示空间
+	labelContainer := container.NewHBox(np.selectedServerLabel)
 	headerBar := container.NewHBox(
 		backBtn,
+		container.NewBorder(nil, nil, nil, nil, labelContainer), // 限制标签宽度，给足够空间显示
 		layout.NewSpacer(),
 		testAllBtn,
 		subscriptionBtn,
-		refreshBtn,
 	)
 
 	// 4. 组合头部区域（添加分隔线，移除 padding 降低高度）
@@ -219,7 +196,31 @@ func (np *NodePage) Build() fyne.CanvasObject {
 // Refresh 刷新节点列表的显示，使 UI 反映最新的节点数据。
 func (np *NodePage) Refresh() {
 	np.loadNodes()
+	np.updateSelectedServerLabel() // 更新选中服务器标签
 	// 绑定数据更新后会自动触发列表刷新，无需手动调用
+}
+
+// updateSelectedServerLabel 更新当前选中服务器名标签
+func (np *NodePage) updateSelectedServerLabel() {
+	if np.selectedServerLabel == nil {
+		return
+	}
+
+	// 从 Store 获取选中的服务器
+	var selectedNode *database.Node
+	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
+		selectedNode = np.appState.Store.Nodes.GetSelected()
+	}
+
+	if selectedNode == nil {
+		np.selectedServerLabel.SetText("未选中")
+		np.selectedServerLabel.Importance = widget.LowImportance
+		return
+	}
+
+	// 显示服务器名称
+	np.selectedServerLabel.SetText(selectedNode.Name)
+	np.selectedServerLabel.Importance = widget.MediumImportance
 }
 
 // getNodeCount 获取节点数量
@@ -230,13 +231,21 @@ func (np *NodePage) getNodeCount() int {
 // getFilteredNodes 根据当前搜索关键字返回过滤后的节点列表。
 // 支持按名称、地址、协议类型进行不区分大小写的匹配。
 func (np *NodePage) getFilteredNodes() []*database.Node {
-	// 如果没有搜索关键字，直接返回完整列表
-	if np.searchText == "" {
-		return np.nodes
+	// 从 Store 获取所有节点
+	var allNodes []*database.Node
+	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
+		allNodes = np.appState.Store.Nodes.GetAll()
+	} else {
+		allNodes = []*database.Node{}
 	}
 
-	filtered := make([]*database.Node, 0, len(np.nodes))
-	for _, node := range np.nodes {
+	// 如果没有搜索关键字，直接返回完整列表
+	if np.searchText == "" {
+		return allNodes
+	}
+
+	filtered := make([]*database.Node, 0, len(allNodes))
+	for _, node := range allNodes {
 		name := strings.ToLower(node.Name)
 		addr := strings.ToLower(node.Addr)
 		protocol := strings.ToLower(node.ProtocolType)
@@ -270,109 +279,137 @@ func (np *NodePage) updateNodeItem(id widget.ListItemID, obj fyne.CanvasObject) 
 	item.id = id
 	item.isSelected = node.Selected // 设置是否选中
 	// 检查是否为当前连接的节点
+	selectedID := ""
+	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
+		selectedID = np.appState.Store.Nodes.GetSelectedID()
+	}
 	item.isConnected = (np.appState != nil && np.appState.XrayInstance != nil && 
-		np.appState.XrayInstance.IsRunning() && np.appState.SelectedServerID == node.ID)
+		np.appState.XrayInstance.IsRunning() && selectedID == node.ID)
 
 	// 使用新的Update方法更新多列信息
 	item.Update(*node)
 }
 
-// // onSelected 服务器选中事件
-// func (np *NodePage) onSelected(id widget.ListItemID) {
-// 	servers := np.getFilteredServers()
-// 	if id < 0 || id >= len(servers) {
-// 		return
-// 	}
+// onNodeSelected 节点选中事件（单击选中）
+func (np *NodePage) onNodeSelected(id widget.ListItemID) {
+	fmt.Println("onNodeSelected: ", id, "panel: ", np)
+	nodes := np.getFilteredNodes()
+	if id < 0 || id >= len(nodes) {
+		return
+	}
 
-// 	srv := servers[id]
-// 	np.appState.SelectedServerID = srv.ID
+	node := nodes[id]
 
-// 	// 更新状态绑定（使用双向绑定，UI 会自动更新）
-// 	if np.appState != nil {
-// 		np.appState.UpdateProxyStatus()
-// 	}
+	// 通过 Store 选中节点（会自动更新数据库和绑定）
+	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
+		if err := np.appState.Store.Nodes.Select(node.ID); err != nil {
+			if np.appState.Logger != nil {
+				np.appState.Logger.Error("选中服务器失败: %v", err)
+			}
+			return
+		}
+	}
 
-// 	// 调用回调
-// 	if np.onServerSelect != nil {
-// 		np.onServerSelect(srv)
-// 	}
-// }
+	// 更新选中服务器标签
+	np.updateSelectedServerLabel()
 
-// onRightClick 右键菜单 - 注释功能
-// func (np *NodePage) onRightClick(id widget.ListItemID, ev *fyne.PointEvent) {
-// 	nodes := np.getFilteredNodes()
-// 	if id < 0 || id >= len(nodes) {
-// 		return
-// 	}
+	// 刷新列表显示
+	np.Refresh()
+}
 
-// 	node := nodes[id]
-// 	np.appState.SelectedServerID = node.ID
+// onRightClick 右键菜单 - 显示操作菜单
+func (np *NodePage) onRightClick(id widget.ListItemID, ev *fyne.PointEvent) {
+	nodes := np.getFilteredNodes()
+	if id < 0 || id >= len(nodes) {
+		return
+	}
 
-// 	// 创建右键菜单
-// 	menu := fyne.NewMenu("",
-// 		fyne.NewMenuItem("测速", func() {
-// 			np.onTestSpeed(id)
-// 		}),
-// 		fyne.NewMenuItem("启动代理", func() {
-// 			np.onStartProxy(id)
-// 		}),
-// 		fyne.NewMenuItem("停止代理", func() {
-// 			np.onStopProxy()
-// 		}),
-// 	)
+	// 先选中该节点
+	np.onNodeSelected(id)
 
-// 	// 显示菜单
-// 	popup := widget.NewPopUpMenu(menu, np.appState.Window.Canvas())
-// 	popup.ShowAtPosition(ev.AbsolutePosition)
-// }
+	// 创建右键菜单
+	menuItems := []*fyne.MenuItem{
+		fyne.NewMenuItem("连接", func() {
+			// 启动代理连接
+			np.onStartProxy(id)
+		}),
+		fyne.NewMenuItem("测速", func() {
+			// 测速
+			np.onTestSpeed(id)
+		}),
+	}
 
-// onTestSpeed 测速 - 注释功能
-// func (np *NodePage) onTestSpeed(id widget.ListItemID) {
-// 	nodes := np.getFilteredNodes()
-// 	if id < 0 || id >= len(nodes) {
-// 		return
-// 	}
+	// 如果代理正在运行，添加停止选项
+	if np.appState != nil && np.appState.XrayInstance != nil && np.appState.XrayInstance.IsRunning() {
+		menuItems = append(menuItems, fyne.NewMenuItemSeparator())
+		menuItems = append(menuItems, fyne.NewMenuItem("停止代理", func() {
+			// 停止代理
+			np.onStopProxy()
+		}))
+	}
 
-// 	node := nodes[id]
+	menu := fyne.NewMenu("", menuItems...)
 
-// 	// 在goroutine中执行测速
-// 	go func() {
-// 		// 记录开始测速日志
-// 		if np.appState != nil {
-// 			np.appState.AppendLog("INFO", "ping", fmt.Sprintf("开始测试服务器延迟: %s (%s:%d)", node.Name, node.Addr, node.Port))
-// 		}
+	// 显示菜单
+	if np.appState != nil && np.appState.Window != nil {
+		popup := widget.NewPopUpMenu(menu, np.appState.Window.Canvas())
+		popup.ShowAtPosition(ev.AbsolutePosition)
+	}
+}
 
-// 		delay, err := np.appState.PingManager.TestServerDelay(*node)
-// 		if err != nil {
-// 			// 记录失败日志
-// 			if np.appState != nil {
-// 				np.appState.AppendLog("ERROR", "ping", fmt.Sprintf("服务器 %s 测速失败: %v", node.Name, err))
-// 			}
-// 			fyne.Do(func() {
-// 				np.appState.Window.SetTitle(fmt.Sprintf("测速失败: %v", err))
-// 			})
-// 			return
-// 		}
+// onTestSpeed 测速
+func (np *NodePage) onTestSpeed(id widget.ListItemID) {
+	nodes := np.getFilteredNodes()
+	if id < 0 || id >= len(nodes) {
+		return
+	}
 
-// 		// 更新服务器延迟
-// 		np.appState.ServerManager.UpdateServerDelay(node.ID, delay)
+	node := nodes[id]
 
-// 		// 记录成功日志
-// 		if np.appState != nil {
-// 			np.appState.AppendLog("INFO", "ping", fmt.Sprintf("服务器 %s 测速完成: %d ms", node.Name, delay))
-// 		}
+	// 在goroutine中执行测速
+	go func() {
+		// 记录开始测速日志
+		if np.appState != nil {
+			np.appState.AppendLog("INFO", "ping", fmt.Sprintf("开始测试服务器延迟: %s (%s:%d)", node.Name, node.Addr, node.Port))
+		}
 
-// 		// 更新UI（需要在主线程中执行）
-// 		fyne.Do(func() {
-// 			np.Refresh()
-// 			// 更新状态绑定（使用双向绑定，UI 会自动更新）
-// 			if np.appState != nil {
-// 				np.appState.UpdateProxyStatus()
-// 			}
-// 			np.appState.Window.SetTitle(fmt.Sprintf("测速完成: %d ms", delay))
-// 		})
-// 	}()
-// }
+		delay, err := np.appState.PingManager.TestServerDelay(*node)
+		if err != nil {
+			// 记录失败日志
+			if np.appState != nil {
+				np.appState.AppendLog("ERROR", "ping", fmt.Sprintf("服务器 %s 测速失败: %v", node.Name, err))
+			}
+			fyne.Do(func() {
+				np.appState.Window.SetTitle(fmt.Sprintf("测速失败: %v", err))
+			})
+			return
+		}
+
+		// 通过 Store 更新服务器延迟（会自动更新数据库和绑定）
+		if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
+			if err := np.appState.Store.Nodes.UpdateDelay(node.ID, delay); err != nil {
+				if np.appState != nil {
+					np.appState.AppendLog("ERROR", "ping", fmt.Sprintf("更新延迟失败: %v", err))
+				}
+			}
+		}
+
+		// 记录成功日志
+		if np.appState != nil {
+			np.appState.AppendLog("INFO", "ping", fmt.Sprintf("服务器 %s 测速完成: %d ms", node.Name, delay))
+		}
+
+		// 更新UI（需要在主线程中执行）
+		fyne.Do(func() {
+			np.Refresh()
+			// 更新状态绑定（使用双向绑定，UI 会自动更新）
+			if np.appState != nil {
+				np.appState.UpdateProxyStatus()
+			}
+			np.appState.Window.SetTitle(fmt.Sprintf("测速完成: %d ms", delay))
+		})
+	}()
+}
 
 // onStartProxyFromSelected 从当前选中的服务器启动代理 - 注释功能
 // func (np *NodePage) onStartProxyFromSelected() {
@@ -409,26 +446,25 @@ func (np *NodePage) updateNodeItem(id widget.ListItemID, obj fyne.CanvasObject) 
 // 	np.startProxyWithServer(srv)
 // }
 
-// onStartProxy 启动代理（右键菜单使用）- 注释功能
-// func (np *NodePage) onStartProxy(id widget.ListItemID) {
-// 	nodes := np.getFilteredNodes()
-// 	if id < 0 || id >= len(nodes) {
-// 		return
-// 	}
+// onStartProxy 启动代理（右键菜单使用）
+func (np *NodePage) onStartProxy(id widget.ListItemID) {
+	nodes := np.getFilteredNodes()
+	if id < 0 || id >= len(nodes) {
+		return
+	}
 
-// 	node := nodes[id]
-// 	np.appState.ServerManager.SelectServer(node.ID)
-// 	np.appState.SelectedServerID = node.ID
+	// 先选中该节点
+	np.onNodeSelected(id)
 
-// 	// 如果已有代理在运行，先停止
-// 	if np.appState.XrayInstance != nil {
-// 		np.appState.XrayInstance.Stop()
-// 		np.appState.XrayInstance = nil
-// 	}
+	// 如果已有代理在运行，先停止
+	if np.appState.XrayInstance != nil {
+		np.appState.XrayInstance.Stop()
+		np.appState.XrayInstance = nil
+	}
 
-// 	// 启动代理
-// 	np.startProxyWithServer(node)
-// }
+	// 启动代理（使用 StartProxyForSelected 方法）
+	np.StartProxyForSelected()
+}
 
 // startProxyWithServer 使用指定的服务器启动代理 - 注释功能
 // func (np *NodePage) startProxyWithServer(srv *database.Node) {
@@ -533,16 +569,8 @@ func (np *NodePage) logAndShowError(message string, err error) {
 
 // saveConfigToDB 保存应用配置到数据库（统一配置保存）
 func (np *NodePage) saveConfigToDB() {
-	if np.appState == nil || np.appState.Config == nil {
-		return
-	}
-	cfg := np.appState.Config
-
-	// 保存配置到数据库
-	database.SetAppConfig("logLevel", cfg.LogLevel)
-	database.SetAppConfig("logFile", cfg.LogFile)
-	database.SetAppConfig("autoProxyEnabled", strconv.FormatBool(cfg.AutoProxyEnabled))
-	database.SetAppConfig("autoProxyPort", strconv.Itoa(cfg.AutoProxyPort))
+	// 配置已由 Store.AppConfig 管理，这里不再需要保存
+	// 如果需要保存特定配置，应该通过 Store.AppConfig.Set() 方法
 }
 
 // onStopProxy 停止代理 - 注释功能
@@ -578,8 +606,7 @@ func (np *NodePage) onStopProxy() {
 
 	if stopped {
 		// 停止成功
-		np.appState.Config.AutoProxyEnabled = false
-		np.appState.Config.AutoProxyPort = 0
+		// 配置已由 Store 管理，无需手动更新
 
 		// 更新状态绑定
 		np.appState.UpdateProxyStatus()
@@ -603,10 +630,13 @@ func (np *NodePage) StopProxy() {
 func (np *NodePage) onTestAll() {
 	// 在goroutine中执行测速
 	go func() {
-		servers := np.appState.ServerManager.ListServers()
+		var servers []*database.Node
+		if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
+			servers = np.appState.Store.Nodes.GetAll()
+		}
 		enabledCount := 0
 		for _, s := range servers {
-			if s.Enabled {
+			if s != nil && s.Enabled {
 				enabledCount++
 			}
 		}
@@ -622,7 +652,7 @@ func (np *NodePage) onTestAll() {
 		successCount := 0
 		failCount := 0
 		for _, srv := range servers {
-			if !srv.Enabled {
+			if srv == nil || !srv.Enabled {
 				continue
 			}
 			delay, exists := results[srv.ID]
@@ -661,6 +691,7 @@ type ServerListItem struct {
 	id          widget.ListItemID
 	panel       *NodePage
 	renderObj   fyne.CanvasObject // 渲染对象
+	bgRect      *canvas.Rectangle // 背景矩形（用于动态改变颜色）
 	regionLabel *widget.Label
 	nameLabel   *widget.Label
 	delayLabel  *widget.Label
@@ -701,8 +732,9 @@ func NewServerListItem(panel *NodePage) *ServerListItem {
 // setupLayout 设置列表项布局（参考 SubscriptionCard 的设计）
 func (s *ServerListItem) setupLayout() fyne.CanvasObject {
 	// 创建背景（使用输入背景色，与列表项区分）
-	bg := canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
-	bg.CornerRadius = 4 // 较小的圆角，适合列表项
+	// 保存引用以便动态更新选中状态的颜色
+	s.bgRect = canvas.NewRectangle(theme.Color(theme.ColorNameInputBackground))
+	s.bgRect.CornerRadius = 4 // 较小的圆角，适合列表项
 
 	// 使用 GridWithColumns 自动分配列宽：地区（固定比例）+ 名称（自适应）+ 延迟（固定比例）
 	// 减少 padding，使用最小间距
@@ -714,7 +746,8 @@ func (s *ServerListItem) setupLayout() fyne.CanvasObject {
 
 	// 使用 Stack 布局：背景 + 内容
 	// 移除 padding，删除列表项之间的间距
-	return container.NewStack(bg, content)
+	// 使用 Padded 确保内容区域可点击
+	return container.NewStack(s.bgRect, container.NewPadded(content))
 }
 
 // MinSize 返回列表项的最小尺寸（设置行高为52px，符合UI改进建议：48-56px）
@@ -727,13 +760,22 @@ func (s *ServerListItem) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(s.renderObj)
 }
 
-// TappedSecondary 处理右键点击事件 - 注释功能
-// func (s *ServerListItem) TappedSecondary(pe *fyne.PointEvent) {
-// 	if s.panel == nil {
-// 		return
-// 	}
-// 	s.panel.onRightClick(s.id, pe)
-// }
+// Tapped 处理单击事件 - 选中服务器
+func (s *ServerListItem) Tapped(pe *fyne.PointEvent) {
+	fmt.Println("Tapped: ", s.id, "panel: ", s.panel)
+	if s.panel == nil {
+		return
+	}
+	s.panel.onNodeSelected(s.id)
+}
+
+// TappedSecondary 处理右键点击事件 - 显示操作菜单
+func (s *ServerListItem) TappedSecondary(pe *fyne.PointEvent) {
+	if s.panel == nil {
+		return
+	}
+	s.panel.onRightClick(s.id, pe)
+}
 
 // Update  更新服务器列表项的信息
 func (s *ServerListItem) Update(server database.Node) {
@@ -743,9 +785,34 @@ func (s *ServerListItem) Update(server database.Node) {
 		
 		// 检查是否为当前连接的节点
 		if s.panel != nil && s.panel.appState != nil {
+			selectedID := ""
+			if s.panel.appState.Store != nil && s.panel.appState.Store.Nodes != nil {
+				selectedID = s.panel.appState.Store.Nodes.GetSelectedID()
+			}
 			s.isConnected = (s.panel.appState.XrayInstance != nil && 
 				s.panel.appState.XrayInstance.IsRunning() && 
-				s.panel.appState.SelectedServerID == server.ID)
+				selectedID == server.ID)
+		}
+
+		// 根据选中状态和连接状态更新背景色
+		if s.bgRect != nil {
+			if s.isConnected {
+				// 当前连接的节点：使用主题色（蓝色）
+				s.bgRect.FillColor = theme.PrimaryColor()
+				s.bgRect.StrokeColor = theme.PrimaryColor()
+				s.bgRect.StrokeWidth = 2
+			} else if s.isSelected {
+				// 选中的节点：使用浅蓝色背景
+				s.bgRect.FillColor = theme.Color(theme.ColorNameSelection)
+				s.bgRect.StrokeColor = theme.Color(theme.ColorNameSeparator)
+				s.bgRect.StrokeWidth = 1
+			} else {
+				// 未选中：使用默认背景色
+				s.bgRect.FillColor = theme.Color(theme.ColorNameInputBackground)
+				s.bgRect.StrokeColor = theme.Color(theme.ColorNameSeparator)
+				s.bgRect.StrokeWidth = 0
+			}
+			s.bgRect.Refresh()
 		}
 
 		// 地区：从名称中尝试提取前缀（例如 "US - LA" -> "US"）
