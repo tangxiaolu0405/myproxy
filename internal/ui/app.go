@@ -32,6 +32,7 @@ type AppState struct {
 	ConfigService       *service.ConfigService
 	ProxyService        *service.ProxyService
 	SubscriptionService *service.SubscriptionService
+	XrayControlService  *service.XrayControlService
 
 	// Xray 实例 - 用于 xray-core 代理
 	XrayInstance *xray.XrayInstance
@@ -65,6 +66,12 @@ func NewAppState() *AppState {
 	// 创建 Ping 工具
 	pingUtil := utils.NewPing()
 
+	// 创建日志回调函数（用于 XrayControlService）
+	// 注意：此时 Logger 还未创建，使用临时回调，Logger 创建后会在 InitLogger 中更新
+	logCallback := func(level, message string) {
+		// 临时日志回调，Logger 创建后会被替换为真正的日志回调
+	}
+
 	appState := &AppState{
 		Ping:               pingUtil,
 		Logger:             nil, // Logger 将在 InitLogger 中创建
@@ -78,6 +85,8 @@ func NewAppState() *AppState {
 		ServerNameBinding:  dataStore.ProxyStatus.ServerNameBinding,
 		// ProxyService 将在 XrayInstance 创建后初始化
 		ProxyService: nil,
+		// XrayControlService 使用临时日志回调，Logger 创建后会更新
+		XrayControlService: service.NewXrayControlService(dataStore, logCallback),
 	}
 
 	return appState
@@ -182,6 +191,17 @@ func (a *AppState) InitLogger() error {
 
 	// 设置 logger 到 appState
 	a.Logger = logger
+
+	// 更新 XrayControlService 的日志回调（使用真实的日志回调）
+	if a.XrayControlService != nil {
+		// 创建真正的日志回调函数，将日志转发到 AppState.AppendLog
+		realLogCallback := func(level, message string) {
+			a.AppendLog(level, "xray", message)
+		}
+		// 注意：XrayControlService 目前不支持更新回调，需要在创建时就传入
+		// 这里我们重新创建 service 实例（Logger 创建后只初始化一次）
+		a.XrayControlService = service.NewXrayControlService(a.Store, realLogCallback)
+	}
 
 	// Logger 初始化后，启动日志文件监控（用于监控 xray 日志等直接从文件写入的日志）
 	if a.LogsPanel != nil {

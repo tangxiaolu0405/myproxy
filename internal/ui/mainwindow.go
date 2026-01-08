@@ -5,6 +5,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -237,11 +238,10 @@ type MainWindow struct {
 	subscriptionPageInstance *SubscriptionPage // 订阅管理页面实例
 
 	// 主界面状态UI组件（使用双向绑定）
-	mainToggleButton *widget.Button      // 主开关按钮（连接/断开）
-	proxyStatusLabel *widget.Label        // 代理状态标签（绑定到 ProxyStatusBinding）
+	mainToggleButton *CircularButton    // 主开关按钮（连接/断开，圆形，替代了状态显示）
 	portLabel        *widget.Label        // 端口标签（绑定到 PortBinding）
 	serverNameLabel  *widget.Label        // 服务器名称标签（绑定到 ServerNameBinding）
-	delayLabel       *widget.Label        // 延迟标签
+	delayLabel       *widget.Label        // 延迟标签（已不使用，保留用于未来扩展）
 	proxyModeButtons [3]*widget.Button    // 系统代理模式按钮组（清除、系统、终端）
 	systemProxy      *systemproxy.SystemProxy // 系统代理管理器
 	
@@ -279,23 +279,6 @@ func NewMainWindow(appState *AppState) *MainWindow {
 
 	return mw
 }
-
-// loadLayoutConfig 从 Store 加载布局配置（Store 已经管理，这里只是确保数据最新）
-func (mw *MainWindow) loadLayoutConfig() {
-	if mw.appState != nil && mw.appState.Store != nil && mw.appState.Store.Layout != nil {
-		_ = mw.appState.Store.Layout.Load()
-	}
-}
-
-// saveLayoutConfig 保存布局配置到 Store
-func (mw *MainWindow) saveLayoutConfig() {
-	if mw.appState == nil || mw.appState.Store == nil || mw.appState.Store.Layout == nil {
-		return
-	}
-	config := mw.GetLayoutConfig()
-	_ = mw.appState.Store.Layout.Save(config)
-}
-
 // Build 构建并返回主窗口的 UI 组件树。
 // 该方法使用自定义 Border 布局，支持百分比控制各区域的大小。
 // 返回：主窗口的根容器组件
@@ -401,15 +384,7 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		return container.NewWithoutLayout()
 	}
 
-	// 创建状态标签（使用双向绑定）
-	if mw.proxyStatusLabel == nil {
-		if mw.appState.ProxyStatusBinding != nil {
-			mw.proxyStatusLabel = widget.NewLabelWithData(mw.appState.ProxyStatusBinding)
-		} else {
-			mw.proxyStatusLabel = widget.NewLabel("代理状态: 未知")
-		}
-		mw.proxyStatusLabel.Wrapping = fyne.TextWrapOff
-	}
+	// 注意：proxyStatusLabel 已移除，因为圆形按钮已经替代了状态显示
 
 	if mw.portLabel == nil {
 		if mw.appState.PortBinding != nil {
@@ -436,15 +411,14 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		mw.delayLabel.Wrapping = fyne.TextWrapOff
 	}
 
-	// 创建状态图标
-	statusIcon := widget.NewIcon(theme.CancelIcon())
-	mw.updateStatusIcon(statusIcon)
-
-	// 创建主开关按钮
+	// 创建主开关按钮（圆形，带链接图标）
 	if mw.mainToggleButton == nil {
-		mw.mainToggleButton = widget.NewButton("", mw.onToggleProxy)
-		mw.mainToggleButton.Importance = widget.HighImportance
-		mw.mainToggleButton.Resize(fyne.NewSize(120, 120))
+		// 计算按钮尺寸（窗口大小的1/10）
+		buttonSize := mw.calculateButtonSize()
+		
+		// 创建圆形按钮（使用 DownloadIcon 作为链接图标）
+		mw.mainToggleButton = NewCircularButton(theme.DownloadIcon(), mw.onToggleProxy, buttonSize)
+		mw.mainToggleButton.SetImportance(widget.LowImportance)
 		mw.updateMainToggleButton()
 	}
 
@@ -487,14 +461,6 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		}
 		mw.systemProxyRestored = true
 	}
-
-	// 顶部：当前连接状态（简洁文案，居中显示）
-	statusHeader := container.NewCenter(container.NewHBox(
-		statusIcon,
-		NewSpacer(SpacingSmall),
-		mw.proxyStatusLabel,
-	))
-	statusHeader = container.NewPadded(statusHeader)
 
 	// 中部：巨大的主开关按钮（居中，更大的尺寸）
 	mainControlArea := container.NewCenter(container.NewPadded(mw.mainToggleButton))
@@ -558,15 +524,15 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	trafficPlaceholder.Alignment = fyne.TextAlignCenter
 	trafficArea := container.NewCenter(container.NewPadded(trafficPlaceholder))
 
-	// 整体垂直排版
+	// 整体垂直排版（移除顶部状态，给实时流量图更多空间）
 	content := container.NewVBox(
-		statusHeader,
-		NewSpacer(SpacingLarge),
+		NewSpacer(SpacingLarge), // 顶部留白
 		mainControlArea,
 		NewSpacer(SpacingLarge),
 		nodeAndMode,
-		NewSpacer(SpacingMedium),
+		NewSpacer(SpacingLarge), // 增加间距，给实时流量图更多空间
 		trafficArea,
+		NewSpacer(SpacingMedium), // 底部留白
 	)
 
 	// 顶部标题栏：右侧仅保留设置入口
@@ -748,14 +714,10 @@ func (mw *MainWindow) onToggleProxy() {
 
 	if isRunning {
 		// 停止代理
-		if mw.nodePageInstance != nil {
-			mw.nodePageInstance.StopProxy()
-		}
+		mw.stopProxy()
 	} else {
 		// 启动代理（使用当前选中的服务器）
-		if mw.nodePageInstance != nil {
-			mw.nodePageInstance.StartProxyForSelected()
-		}
+		mw.startProxy()
 	}
 
 	// 更新状态
@@ -773,25 +735,173 @@ func (mw *MainWindow) refreshHomePageStatus() {
 	}
 }
 
-// updateStatusIcon 更新状态图标
-func (mw *MainWindow) updateStatusIcon(icon *widget.Icon) {
-	if icon == nil {
+// startProxy 启动代理（使用当前选中的节点）
+// 使用 XrayControlService 来处理代理启动逻辑
+func (mw *MainWindow) startProxy() {
+	if mw.appState == nil {
+		mw.logAndShowError("启动代理失败", fmt.Errorf("AppState 未初始化"))
 		return
 	}
-	
-	isRunning := false
-	if mw.appState != nil && mw.appState.XrayInstance != nil {
-		isRunning = mw.appState.XrayInstance.IsRunning()
+
+	if mw.appState.XrayControlService == nil {
+		mw.logAndShowError("启动代理失败", fmt.Errorf("XrayControlService 未初始化"))
+		return
 	}
+
+	// 使用统一的日志文件路径（与应用日志使用同一个文件）
+	unifiedLogPath := ""
+	if mw.appState.Logger != nil {
+		unifiedLogPath = mw.appState.Logger.GetLogFilePath()
+	}
+
+	// 调用 service 启动代理
+	result := mw.appState.XrayControlService.StartProxy(mw.appState.XrayInstance, unifiedLogPath)
 	
-	if isRunning {
-		icon.SetResource(theme.ConfirmIcon())
+	if result.Error != nil {
+		mw.logAndShowError("启动代理失败", result.Error)
+		if mw.appState != nil {
+			mw.appState.UpdateProxyStatus()
+		}
+		return
+	}
+
+	// 启动成功，更新 AppState 中的 XrayInstance
+	mw.appState.XrayInstance = result.XrayInstance
+
+	// 更新 ProxyService 的 xray 实例引用
+	if mw.appState.ProxyService != nil {
+		mw.appState.ProxyService.UpdateXrayInstance(result.XrayInstance)
 	} else {
-		icon.SetResource(theme.CancelIcon())
+		// 延迟初始化 ProxyService
+		mw.appState.ProxyService = service.NewProxyService(result.XrayInstance)
+	}
+
+	// 记录日志（统一日志记录）
+	if mw.appState.Logger != nil && result.XrayInstance != nil {
+		selectedNode := mw.appState.Store.Nodes.GetSelected()
+		if selectedNode != nil {
+			mw.appState.Logger.InfoWithType(logging.LogTypeProxy, "xray-core代理已启动: %s (端口: %d)", selectedNode.Name, result.XrayInstance.GetPort())
+		}
+	}
+
+	// 更新状态绑定（使用双向绑定，UI 会自动更新）
+	if mw.appState != nil {
+		mw.appState.UpdateProxyStatus()
+	}
+
+	// 刷新节点页面（如果已创建）
+	if mw.nodePageInstance != nil {
+		mw.nodePageInstance.Refresh()
+	}
+
+	// 显示成功对话框
+	if mw.appState.Window != nil && result.XrayInstance != nil {
+		selectedNode := mw.appState.Store.Nodes.GetSelected()
+		if selectedNode != nil {
+			message := fmt.Sprintf("代理已启动\n节点: %s\n端口: %d", selectedNode.Name, result.XrayInstance.GetPort())
+			dialog.ShowInformation("代理启动成功", message, mw.appState.Window)
+		}
 	}
 }
 
-// updateMainToggleButton 根据代理运行状态更新主开关按钮的文案和样式
+// stopProxy 停止代理
+// 使用 XrayControlService 来处理代理停止逻辑
+func (mw *MainWindow) stopProxy() {
+	if mw.appState == nil {
+		mw.logAndShowError("停止代理失败", fmt.Errorf("AppState 未初始化"))
+		return
+	}
+
+	if mw.appState.XrayControlService == nil {
+		mw.logAndShowError("停止代理失败", fmt.Errorf("XrayControlService 未初始化"))
+		return
+	}
+
+	// 调用 service 停止代理
+	result := mw.appState.XrayControlService.StopProxy(mw.appState.XrayInstance)
+
+	if result.Error != nil {
+		mw.logAndShowError("停止代理失败", result.Error)
+		return
+	}
+
+	// 停止成功，销毁实例（生命周期 = 代理运行生命周期）
+	mw.appState.XrayInstance = nil
+
+	// 记录日志（统一日志记录）
+	if mw.appState.Logger != nil {
+		mw.appState.Logger.InfoWithType(logging.LogTypeProxy, "xray-core代理已停止")
+	}
+
+	// 更新状态绑定
+	if mw.appState != nil {
+		mw.appState.UpdateProxyStatus()
+	}
+
+	// 刷新节点页面（如果已创建）
+	if mw.nodePageInstance != nil {
+		mw.nodePageInstance.Refresh()
+	}
+
+	// 显示成功对话框
+	if mw.appState.Window != nil {
+		if result.LogMessage == "代理未运行" {
+			dialog.ShowInformation("提示", "代理未运行", mw.appState.Window)
+		} else {
+			dialog.ShowInformation("代理停止成功", "代理已停止", mw.appState.Window)
+		}
+	}
+}
+
+// logAndShowError 记录日志并显示错误（统一错误处理）
+func (mw *MainWindow) logAndShowError(message string, err error) {
+	if mw.appState != nil && mw.appState.Logger != nil {
+		mw.appState.Logger.Error("%s: %v", message, err)
+	}
+	if mw.appState != nil && mw.appState.Window != nil {
+		errorMsg := fmt.Errorf("%s: %w", message, err)
+		dialog.ShowError(errorMsg, mw.appState.Window)
+	}
+	if mw.appState != nil {
+		mw.appState.AppendLog("ERROR", "app", fmt.Sprintf("%s: %v", message, err))
+	}
+}
+
+// 注意：updateStatusIcon 已移除，因为圆形按钮已经替代了状态图标显示
+
+// calculateButtonSize 计算按钮尺寸（窗口大小的1/10）
+func (mw *MainWindow) calculateButtonSize() float32 {
+	if mw.appState == nil || mw.appState.Window == nil {
+		// 默认尺寸
+		return 80
+	}
+	
+	// 获取窗口尺寸
+	windowSize := mw.appState.Window.Canvas().Size()
+	if windowSize.Width == 0 && windowSize.Height == 0 {
+		// 如果窗口尺寸未初始化，使用默认尺寸
+		return 80
+	}
+	
+	// 取窗口宽度和高度的较小值，然后除以10
+	minDimension := windowSize.Width
+	if windowSize.Height < windowSize.Width {
+		minDimension = windowSize.Height
+	}
+	
+	buttonSize := minDimension / 10
+	
+	// 设置最小和最大尺寸限制
+	if buttonSize < 60 {
+		buttonSize = 60
+	} else if buttonSize > 150 {
+		buttonSize = 150
+	}
+	
+	return buttonSize
+}
+
+// updateMainToggleButton 根据代理运行状态更新主开关按钮的样式
 func (mw *MainWindow) updateMainToggleButton() {
 	if mw.mainToggleButton == nil {
 		return
@@ -802,43 +912,16 @@ func (mw *MainWindow) updateMainToggleButton() {
 		isRunning = mw.appState.XrayInstance.IsRunning()
 	}
 
+	// 更新按钮重要性：成功时为 SuccessImportance，未连接时为 LowImportance
 	if isRunning {
-		mw.mainToggleButton.SetText("🟢 ON")
-		mw.mainToggleButton.Importance = widget.HighImportance
+		mw.mainToggleButton.SetImportance(widget.SuccessImportance)
 	} else {
-		mw.mainToggleButton.SetText("⚪ OFF")
-		mw.mainToggleButton.Importance = widget.MediumImportance
+		mw.mainToggleButton.SetImportance(widget.LowImportance)
 	}
-}
-
-// updateDelayLabel 根据当前选中服务器更新延迟显示
-func (mw *MainWindow) updateDelayLabel() {
-	if mw.delayLabel == nil || mw.appState == nil {
-		return
-	}
-
-	delayText := "-"
-	if mw.appState.Store != nil && mw.appState.Store.Nodes != nil {
-		selectedNode := mw.appState.Store.Nodes.GetSelected()
-		if selectedNode != nil {
-			if selectedNode.Delay > 0 {
-				var colorIndicator string
-				if selectedNode.Delay < 100 {
-					colorIndicator = "🟢"
-				} else if selectedNode.Delay <= 200 {
-					colorIndicator = "🟡"
-				} else {
-					colorIndicator = "🔴"
-				}
-				delayText = fmt.Sprintf("%s %dms", colorIndicator, selectedNode.Delay)
-			} else if selectedNode.Delay < 0 {
-				delayText = "🔴 超时"
-			} else {
-				delayText = "⚪ N/A"
-			}
-		}
-	}
-	mw.delayLabel.SetText(delayText)
+	
+	// 更新按钮尺寸（响应窗口大小变化）
+	buttonSize := mw.calculateButtonSize()
+	mw.mainToggleButton.SetSize(buttonSize)
 }
 
 // onProxyModeButtonClicked 系统代理模式按钮点击处理
