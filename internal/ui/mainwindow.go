@@ -241,7 +241,6 @@ type MainWindow struct {
 	mainToggleButton *CircularButton    // 主开关按钮（连接/断开，圆形，替代了状态显示）
 	portLabel        *widget.Label        // 端口标签（绑定到 PortBinding）
 	serverNameLabel  *widget.Label        // 服务器名称标签（绑定到 ServerNameBinding）
-	delayLabel       *widget.Label        // 延迟标签（已不使用，保留用于未来扩展）
 	proxyModeButtons [3]*widget.Button    // 系统代理模式按钮组（清除、系统、终端）
 	systemProxy      *systemproxy.SystemProxy // 系统代理管理器
 	
@@ -384,8 +383,6 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		return container.NewWithoutLayout()
 	}
 
-	// 注意：proxyStatusLabel 已移除，因为圆形按钮已经替代了状态显示
-
 	if mw.portLabel == nil {
 		if mw.appState.PortBinding != nil {
 			mw.portLabel = widget.NewLabelWithData(mw.appState.PortBinding)
@@ -405,12 +402,6 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		mw.serverNameLabel.Wrapping = fyne.TextWrapOff
 		mw.serverNameLabel.Truncation = fyne.TextTruncateEllipsis
 	}
-
-	if mw.delayLabel == nil {
-		mw.delayLabel = widget.NewLabel("-")
-		mw.delayLabel.Wrapping = fyne.TextWrapOff
-	}
-
 	// 创建主开关按钮（圆形，带链接图标）
 	if mw.mainToggleButton == nil {
 		// 计算按钮尺寸（窗口大小的1/10）
@@ -520,19 +511,18 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	nodeAndMode = container.NewPadded(nodeAndMode)
 
 	// 底部：实时流量占位（未来可替换为小曲线图）
+	// 缩小流量图区域大小
 	trafficPlaceholder := widget.NewLabel("实时流量图（预留）")
 	trafficPlaceholder.Alignment = fyne.TextAlignCenter
+	// 减少 padding，缩小流量图区域（移除多余的 padding 层）
 	trafficArea := container.NewCenter(container.NewPadded(trafficPlaceholder))
 
-	// 整体垂直排版（移除顶部状态，给实时流量图更多空间）
+	// 整体垂直排版（减少顶部留白，整体往上移动）
 	content := container.NewVBox(
-		NewSpacer(SpacingLarge), // 顶部留白
 		mainControlArea,
-		NewSpacer(SpacingLarge),
 		nodeAndMode,
-		NewSpacer(SpacingLarge), // 增加间距，给实时流量图更多空间
+		NewSpacer(SpacingSmall), // 减少间距（从 Large 改为 Medium）
 		trafficArea,
-		NewSpacer(SpacingMedium), // 底部留白
 	)
 
 	// 顶部标题栏：右侧仅保留设置入口
@@ -546,7 +536,7 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 
 	return container.NewBorder(
 		headerBar,
-		NewSpacer(SpacingLarge), // 底部预留少量空白
+		nil, // 底部预留少量空白
 		nil,
 		nil,
 		container.NewCenter(content),
@@ -869,33 +859,33 @@ func (mw *MainWindow) logAndShowError(message string, err error) {
 
 // 注意：updateStatusIcon 已移除，因为圆形按钮已经替代了状态图标显示
 
-// calculateButtonSize 计算按钮尺寸（窗口大小的1/10）
+// calculateButtonSize 计算按钮尺寸（窗口大小的1/6，扩大主按钮）
 func (mw *MainWindow) calculateButtonSize() float32 {
 	if mw.appState == nil || mw.appState.Window == nil {
 		// 默认尺寸
-		return 80
+		return 100
 	}
 	
 	// 获取窗口尺寸
 	windowSize := mw.appState.Window.Canvas().Size()
 	if windowSize.Width == 0 && windowSize.Height == 0 {
 		// 如果窗口尺寸未初始化，使用默认尺寸
-		return 80
+		return 100
 	}
 	
-	// 取窗口宽度和高度的较小值，然后除以10
+	// 取窗口宽度和高度的较小值，然后除以6（从10改为6，扩大按钮）
 	minDimension := windowSize.Width
 	if windowSize.Height < windowSize.Width {
 		minDimension = windowSize.Height
 	}
 	
-	buttonSize := minDimension / 10
+	buttonSize := minDimension / 6
 	
-	// 设置最小和最大尺寸限制
-	if buttonSize < 60 {
-		buttonSize = 60
-	} else if buttonSize > 150 {
-		buttonSize = 150
+	// 设置最小和最大尺寸限制（提高最小和最大尺寸）
+	if buttonSize < 80 {
+		buttonSize = 80
+	} else if buttonSize > 180 {
+		buttonSize = 180
 	}
 	
 	return buttonSize

@@ -68,4 +68,3 @@ func NewStyledSelect(options []string, onChanged func(string)) *widget.Select {
 	selectWidget := widget.NewSelect(options, onChanged)
 	return selectWidget
 }
-
