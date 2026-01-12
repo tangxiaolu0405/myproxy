@@ -190,11 +190,6 @@ func (lp *LogsPanel) toggleCollapse() {
 			}
 		}
 	}
-	
-	// 通知主窗口更新布局
-	if lp.appState != nil && lp.appState.MainWindow != nil {
-		lp.appState.MainWindow.UpdateLogsCollapseState(lp.isCollapsed)
-	}
 }
 
 // updateCollapseState 更新折叠状态显示

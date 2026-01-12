@@ -157,22 +157,35 @@ const (
 
 // PageStack 路由栈结构，用于管理页面导航历史
 type PageStack struct {
-	stack []PageType // 页面栈
+	stack      []PageType // 页面栈
+	maxDepth   int        // 最大深度限制（0 表示无限制）
 }
+
+const (
+	// DefaultMaxStackDepth 默认最大栈深度（防止异常情况导致栈无限增长）
+	DefaultMaxStackDepth = 50
+)
 
 // NewPageStack 创建新的路由栈
 func NewPageStack() *PageStack {
 	return &PageStack{
-		stack: make([]PageType, 0),
+		stack:    make([]PageType, 0),
+		maxDepth: DefaultMaxStackDepth,
 	}
 }
 
 // Push 将页面压入栈中
+// 如果栈已满（达到最大深度），会移除最旧的页面（FIFO）
 func (ps *PageStack) Push(pageType PageType) {
+	// 如果设置了最大深度限制，且栈已满，移除最旧的页面
+	if ps.maxDepth > 0 && len(ps.stack) >= ps.maxDepth {
+		ps.stack = ps.stack[1:]
+	}
 	ps.stack = append(ps.stack, pageType)
 }
 
-// Pop 从栈中弹出页面，如果栈为空返回 false
+// Pop 从栈中弹出页面
+// 返回值：页面类型和是否成功弹出（栈为空时返回 false）
 func (ps *PageStack) Pop() (PageType, bool) {
 	if len(ps.stack) == 0 {
 		return PageTypeHome, false
@@ -183,6 +196,20 @@ func (ps *PageStack) Pop() (PageType, bool) {
 	return pageType, true
 }
 
+// Peek 查看栈顶页面但不弹出
+// 返回值：页面类型和是否存在（栈为空时返回 false）
+func (ps *PageStack) Peek() (PageType, bool) {
+	if len(ps.stack) == 0 {
+		return PageTypeHome, false
+	}
+	return ps.stack[len(ps.stack)-1], true
+}
+
+// Size 返回栈中页面的数量
+func (ps *PageStack) Size() int {
+	return len(ps.stack)
+}
+
 // Clear 清空路由栈
 func (ps *PageStack) Clear() {
 	ps.stack = ps.stack[:0]
@@ -191,6 +218,15 @@ func (ps *PageStack) Clear() {
 // IsEmpty 检查栈是否为空
 func (ps *PageStack) IsEmpty() bool {
 	return len(ps.stack) == 0
+}
+
+// SetMaxDepth 设置最大深度限制（0 表示无限制）
+func (ps *PageStack) SetMaxDepth(depth int) {
+	ps.maxDepth = depth
+	// 如果当前栈超过新限制，移除最旧的页面
+	if depth > 0 && len(ps.stack) > depth {
+		ps.stack = ps.stack[len(ps.stack)-depth:]
+	}
 }
 
 // LayoutConfig 存储窗口布局的配置信息，包括各区域的分割比例。
@@ -204,25 +240,79 @@ func DefaultLayoutConfig() *LayoutConfig {
 	return store.DefaultLayoutConfig()
 }
 
-// 系统代理模式常量定义
-const (
-	// 完整模式名称
-	SystemProxyModeClear      = "清除系统代理"
-	SystemProxyModeAuto       = "自动配置系统代理"
-	SystemProxyModeTerminal   = "环境变量代理"
+// SystemProxyMode 系统代理模式类型
+type SystemProxyMode int
 
-	// 简短模式名称（用于UI显示）
-	SystemProxyModeShortClear    = "清除"
-	SystemProxyModeShortAuto     = "系统"
-	SystemProxyModeShortTerminal = "终端"
+const (
+	// SystemProxyModeClear 清除系统代理
+	SystemProxyModeClear SystemProxyMode = iota
+	// SystemProxyModeAuto 自动配置系统代理
+	SystemProxyModeAuto
+	// SystemProxyModeTerminal 环境变量代理
+	SystemProxyModeTerminal
 )
+
+// String 返回完整模式名称（用于存储和日志）
+func (m SystemProxyMode) String() string {
+	switch m {
+	case SystemProxyModeClear:
+		return "清除系统代理"
+	case SystemProxyModeAuto:
+		return "自动配置系统代理"
+	case SystemProxyModeTerminal:
+		return "环境变量代理"
+	default:
+		return ""
+	}
+}
+
+// ShortString 返回简短模式名称（用于UI显示）
+func (m SystemProxyMode) ShortString() string {
+	switch m {
+	case SystemProxyModeClear:
+		return "清除"
+	case SystemProxyModeAuto:
+		return "系统"
+	case SystemProxyModeTerminal:
+		return "终端"
+	default:
+		return ""
+	}
+}
+
+// ParseSystemProxyMode 从完整模式名称解析 SystemProxyMode
+func ParseSystemProxyMode(fullModeName string) SystemProxyMode {
+	switch fullModeName {
+	case "清除系统代理":
+		return SystemProxyModeClear
+	case "自动配置系统代理":
+		return SystemProxyModeAuto
+	case "环境变量代理":
+		return SystemProxyModeTerminal
+	default:
+		return SystemProxyModeClear // 默认返回清除模式
+	}
+}
+
+// ParseSystemProxyModeFromShort 从简短模式名称解析 SystemProxyMode
+func ParseSystemProxyModeFromShort(shortModeName string) SystemProxyMode {
+	switch shortModeName {
+	case "清除":
+		return SystemProxyModeClear
+	case "系统":
+		return SystemProxyModeAuto
+	case "终端":
+		return SystemProxyModeTerminal
+	default:
+		return SystemProxyModeClear // 默认返回清除模式
+	}
+}
 
 // MainWindow 管理主窗口的布局和各个面板组件。
 // 它负责协调订阅管理、服务器列表、日志显示和状态信息四个主要区域的显示。
 type MainWindow struct {
 	appState          *AppState
 	logsPanel         *LogsPanel
-	mainSplit         *container.Split // 主分割容器（服务器列表和日志，保留用于日志面板独立窗口等场景）
 	pageStack         *PageStack      // 路由栈，用于管理页面导航历史
 	currentPage       PageType        // 当前页面类型
 
@@ -239,10 +329,10 @@ type MainWindow struct {
 
 	// 主界面状态UI组件（使用双向绑定）
 	mainToggleButton *CircularButton    // 主开关按钮（连接/断开，圆形，替代了状态显示）
-	portLabel        *widget.Label        // 端口标签（绑定到 PortBinding）
 	serverNameLabel  *widget.Label        // 服务器名称标签（绑定到 ServerNameBinding）
 	proxyModeButtons [3]*widget.Button    // 系统代理模式按钮组（清除、系统、终端）
 	systemProxy      *systemproxy.SystemProxy // 系统代理管理器
+	trafficChart     *TrafficChart       // 实时流量图组件
 	
 	// 状态标志
 	systemProxyRestored bool // 标记系统代理状态是否已恢复（避免重复恢复）
@@ -305,7 +395,7 @@ func (mw *MainWindow) Refresh() {
 	}
 	// 使用双向绑定，只需更新绑定数据，UI 会自动更新
 	if mw.appState != nil {
-		mw.appState.UpdateProxyStatus() // 更新绑定数据（proxyStatusLabel, portLabel, serverNameLabel 会自动更新）
+		mw.appState.UpdateProxyStatus() // 更新绑定数据（serverNameLabel 会自动更新）
 		if mw.mainToggleButton != nil {
 			mw.updateMainToggleButton() 
 		}
@@ -321,10 +411,15 @@ func (mw *MainWindow) SaveLayoutConfig() {
 	}
 	
 	config := mw.GetLayoutConfig()
-	if mw.mainSplit != nil {
-		config.ServerListOffset = mw.mainSplit.Offset
-	}
 	_ = mw.appState.Store.Layout.Save(config)
+}
+
+// Cleanup 清理资源（在窗口关闭时调用）
+func (mw *MainWindow) Cleanup() {
+	// 停止流量图更新
+	if mw.trafficChart != nil {
+		mw.trafficChart.Stop()
+	}
 }
 
 // GetLayoutConfig 返回当前的布局配置。
@@ -334,29 +429,6 @@ func (mw *MainWindow) GetLayoutConfig() *LayoutConfig {
 		return mw.appState.Store.Layout.Get()
 	}
 	return DefaultLayoutConfig()
-}
-
-// UpdateLogsCollapseState 更新日志折叠状态并调整布局
-func (mw *MainWindow) UpdateLogsCollapseState(isCollapsed bool) {
-	if mw.mainSplit == nil {
-		return
-	}
-	
-	if isCollapsed {
-		// 折叠：将偏移设置为接近 1.0，使日志区域几乎不可见
-		mw.mainSplit.Offset = 0.99
-	} else {
-		// 展开：恢复保存的分割位置
-		config := mw.GetLayoutConfig()
-		if config != nil && config.ServerListOffset > 0 {
-			mw.mainSplit.Offset = config.ServerListOffset
-		} else {
-			mw.mainSplit.Offset = 0.6667
-		}
-	}
-	
-	// 刷新分割容器
-	mw.mainSplit.Refresh()
 }
 
 // initPages 初始化单窗口的四个页面：home / node / settings / subscription
@@ -383,15 +455,6 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		return container.NewWithoutLayout()
 	}
 
-	if mw.portLabel == nil {
-		if mw.appState.PortBinding != nil {
-			mw.portLabel = widget.NewLabelWithData(mw.appState.PortBinding)
-		} else {
-			mw.portLabel = widget.NewLabel("监听端口: -")
-		}
-		mw.portLabel.Wrapping = fyne.TextWrapOff
-	}
-
 	if mw.serverNameLabel == nil {
 		if mw.appState.ServerNameBinding != nil {
 			mw.serverNameLabel = widget.NewLabelWithData(mw.appState.ServerNameBinding)
@@ -416,13 +479,13 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	// 创建系统代理模式按钮组（三个按钮平分宽度）
 	if mw.proxyModeButtons[0] == nil {
 		// 创建三个按钮
-		mw.proxyModeButtons[0] = widget.NewButton(SystemProxyModeShortClear, func() {
+		mw.proxyModeButtons[0] = widget.NewButton(SystemProxyModeClear.ShortString(), func() {
 			mw.onProxyModeButtonClicked(SystemProxyModeClear)
 		})
-		mw.proxyModeButtons[1] = widget.NewButton(SystemProxyModeShortAuto, func() {
+		mw.proxyModeButtons[1] = widget.NewButton(SystemProxyModeAuto.ShortString(), func() {
 			mw.onProxyModeButtonClicked(SystemProxyModeAuto)
 		})
-		mw.proxyModeButtons[2] = widget.NewButton(SystemProxyModeShortTerminal, func() {
+		mw.proxyModeButtons[2] = widget.NewButton(SystemProxyModeTerminal.ShortString(), func() {
 			mw.onProxyModeButtonClicked(SystemProxyModeTerminal)
 		})
 		
@@ -433,8 +496,9 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		
 		// 从 Store 恢复系统代理模式选择
 		if mw.appState != nil && mw.appState.ConfigService != nil {
-			savedMode := mw.appState.ConfigService.GetSystemProxyMode()
-			if savedMode != "" {
+			savedModeStr := mw.appState.ConfigService.GetSystemProxyMode()
+			if savedModeStr != "" {
+				savedMode := ParseSystemProxyMode(savedModeStr)
 				mw.updateProxyModeButtonsState(savedMode)
 			}
 		}
@@ -444,8 +508,9 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	// 注意：按钮状态已在创建按钮时恢复，这里只应用实际的系统代理设置
 	if !mw.systemProxyRestored {
 		if mw.appState != nil && mw.appState.ConfigService != nil {
-			savedMode := mw.appState.ConfigService.GetSystemProxyMode()
-			if savedMode != "" {
+			savedModeStr := mw.appState.ConfigService.GetSystemProxyMode()
+			if savedModeStr != "" {
+				savedMode := ParseSystemProxyMode(savedModeStr)
 				// 应用系统代理设置（不保存到 Store，因为这是从 Store 恢复的）
 				_ = mw.applySystemProxyModeWithoutSave(savedMode)
 			}
@@ -510,12 +575,11 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	)
 	nodeAndMode = container.NewPadded(nodeAndMode)
 
-	// 底部：实时流量占位（未来可替换为小曲线图）
-	// 缩小流量图区域大小
-	trafficPlaceholder := widget.NewLabel("实时流量图（预留）")
-	trafficPlaceholder.Alignment = fyne.TextAlignCenter
-	// 减少 padding，缩小流量图区域（移除多余的 padding 层）
-	trafficArea := container.NewCenter(container.NewPadded(trafficPlaceholder))
+	// 底部：实时流量图
+	if mw.trafficChart == nil {
+		mw.trafficChart = NewTrafficChart(mw.appState)
+	}
+	trafficArea := container.NewPadded(mw.trafficChart)
 
 	// 整体垂直排版（减少顶部留白，整体往上移动）
 	content := container.NewVBox(
@@ -914,17 +978,17 @@ func (mw *MainWindow) updateMainToggleButton() {
 	mw.mainToggleButton.SetSize(buttonSize)
 }
 
-// onProxyModeButtonClicked 系统代理模式按钮点击处理
-// 直接调用 systemproxy 方法设置系统代理，不启动代理
-func (mw *MainWindow) onProxyModeButtonClicked(fullModeName string) {
+// applySystemProxyModeCore 应用系统代理模式的核心逻辑（可复用）
+// 参数：
+//   - mode: 系统代理模式
+//   - saveToStore: 是否保存到 Store
+// 返回值：错误信息
+func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore bool) error {
 	if mw.appState == nil {
-		return
+		return fmt.Errorf("appState 未初始化")
 	}
 
-	// 更新按钮选中状态
-	mw.updateProxyModeButtonsState(fullModeName)
-
-	// 直接调用 systemproxy 方法设置系统代理（不启动代理）
+	// 获取当前代理端口
 	proxyPort := 10080
 	if mw.appState.XrayInstance != nil && mw.appState.XrayInstance.IsRunning() {
 		if port := mw.appState.XrayInstance.GetPort(); port > 0 {
@@ -942,7 +1006,7 @@ func (mw *MainWindow) onProxyModeButtonClicked(fullModeName string) {
 	var err error
 	var logMessage string
 
-	switch fullModeName {
+	switch mode {
 	case SystemProxyModeClear:
 		err = mw.systemProxy.ClearSystemProxy()
 		terminalErr := mw.systemProxy.ClearTerminalProxy()
@@ -979,8 +1043,8 @@ func (mw *MainWindow) onProxyModeButtonClicked(fullModeName string) {
 		}
 
 	default:
-		logMessage = fmt.Sprintf("未知的系统代理模式: %s", fullModeName)
-		err = fmt.Errorf("未知的系统代理模式: %s", fullModeName)
+		logMessage = fmt.Sprintf("未知的系统代理模式: %s", mode.String())
+		err = fmt.Errorf("未知的系统代理模式: %s", mode.String())
 	}
 
 	// 输出日志
@@ -996,13 +1060,63 @@ func (mw *MainWindow) onProxyModeButtonClicked(fullModeName string) {
 		}
 	}
 
-	// 保存状态到 Store
-	mw.saveSystemProxyState(fullModeName)
+	// 保存状态到 Store（如果需要）
+	if saveToStore {
+		mw.saveSystemProxyState(mode)
+	}
+
+	return err
+}
+
+// onProxyModeButtonClicked 系统代理模式按钮点击处理
+// 直接调用 systemproxy 方法设置系统代理，不启动代理
+func (mw *MainWindow) onProxyModeButtonClicked(mode SystemProxyMode) {
+	if mw.appState == nil {
+		return
+	}
+
+	// 使用统一的 SetSystemProxyMode 方法，确保托盘菜单也能同步更新
+	_ = mw.SetSystemProxyMode(mode)
+}
+
+// SetSystemProxyMode 设置系统代理模式（公共方法，供托盘等外部调用）
+// 参数：
+//   - mode: 系统代理模式
+func (mw *MainWindow) SetSystemProxyMode(mode SystemProxyMode) error {
+	if mw.appState == nil {
+		return fmt.Errorf("appState 未初始化")
+	}
+
+	// 更新按钮选中状态（如果按钮已创建）
+	mw.updateProxyModeButtonsState(mode)
+
+	// 应用系统代理模式（保存到 Store）
+	err := mw.applySystemProxyModeCore(mode, true)
+
+	// 刷新托盘菜单（如果存在）
+	if mw.appState.TrayManager != nil {
+		mw.appState.TrayManager.RefreshProxyModeMenu()
+	}
+
+	return err
+}
+
+// GetCurrentSystemProxyMode 获取当前系统代理模式
+// 返回值：当前模式，如果未设置则返回 SystemProxyModeClear
+func (mw *MainWindow) GetCurrentSystemProxyMode() SystemProxyMode {
+	if mw.appState == nil || mw.appState.ConfigService == nil {
+		return SystemProxyModeClear
+	}
+	modeStr := mw.appState.ConfigService.GetSystemProxyMode()
+	if modeStr == "" {
+		return SystemProxyModeClear
+	}
+	return ParseSystemProxyMode(modeStr)
 }
 
 // updateProxyModeButtonsState 更新按钮选中状态
 // 选中按钮使用 MediumImportance（适中的视觉区分，颜色已通过主题加深20%），未选中按钮使用 LowImportance（Mac 简约风格）
-func (mw *MainWindow) updateProxyModeButtonsState(fullModeName string) {
+func (mw *MainWindow) updateProxyModeButtonsState(mode SystemProxyMode) {
 	if mw.proxyModeButtons[0] == nil {
 		return
 	}
@@ -1013,7 +1127,7 @@ func (mw *MainWindow) updateProxyModeButtonsState(fullModeName string) {
 	}
 
 	// 设置选中按钮为中等重要性（颜色已通过主题加深20%）
-	switch fullModeName {
+	switch mode {
 	case SystemProxyModeClear:
 		mw.proxyModeButtons[0].Importance = widget.MediumImportance
 	case SystemProxyModeAuto:
@@ -1028,91 +1142,13 @@ func (mw *MainWindow) updateProxyModeButtonsState(fullModeName string) {
 	}
 }
 
-// getFullModeName 将简短文本映射到完整的功能名称
-func (mw *MainWindow) getFullModeName(shortText string) string {
-	switch shortText {
-	case SystemProxyModeShortClear:
-		return SystemProxyModeClear
-	case SystemProxyModeShortAuto:
-		return SystemProxyModeAuto
-	case SystemProxyModeShortTerminal:
-		return SystemProxyModeTerminal
-	default:
-		return shortText
-	}
-}
 
-// getShortModeName 将完整的功能名称映射到简短文本
-func (mw *MainWindow) getShortModeName(fullName string) string {
-	switch fullName {
-	case SystemProxyModeClear:
-		return SystemProxyModeShortClear
-	case SystemProxyModeAuto:
-		return SystemProxyModeShortAuto
-	case SystemProxyModeTerminal:
-		return SystemProxyModeShortTerminal
-	default:
-		return ""
-	}
-}
-
-// applySystemProxyMode 应用系统代理模式
+// applySystemProxyMode 应用系统代理模式（通过 ProxyService，已废弃，保留用于兼容性）
 // 参数：
-//   - fullModeName: 完整模式名称（如"清除系统代理"、"自动配置系统代理"、"环境变量代理"）
-func (mw *MainWindow) applySystemProxyMode(fullModeName string) error {
-	if mw.appState == nil {
-		return fmt.Errorf("appState 未初始化")
-	}
-
-	// 确保 ProxyService 已初始化或更新
-	if mw.appState.ProxyService == nil {
-		// 如果 XrayInstance 已创建，初始化 ProxyService
-		if mw.appState.XrayInstance != nil {
-			mw.appState.ProxyService = service.NewProxyService(mw.appState.XrayInstance)
-		} else {
-			// 即使 XrayInstance 未创建，也创建 ProxyService（使用 nil）
-			mw.appState.ProxyService = service.NewProxyService(nil)
-		}
-	} else {
-		// 如果 ProxyService 已存在，更新 XrayInstance 引用
-		if mw.appState.XrayInstance != nil {
-			mw.appState.ProxyService.UpdateXrayInstance(mw.appState.XrayInstance)
-		}
-	}
-
-	// 将完整模式名称映射到简短模式名称（用于 ProxyService）
-	var mode string
-	switch fullModeName {
-	case SystemProxyModeClear:
-		mode = "clear"
-	case SystemProxyModeAuto:
-		mode = "auto"
-	case SystemProxyModeTerminal:
-		mode = "terminal"
-	default:
-		return fmt.Errorf("未知的系统代理模式: %s", fullModeName)
-	}
-
-	// 调用 ProxyService 应用系统代理模式
-	result := mw.appState.ProxyService.ApplySystemProxyMode(mode)
-
-	// 输出日志
-	if result.Error == nil {
-		mw.appState.AppendLog("INFO", "app", result.LogMessage)
-		if mw.appState.Logger != nil {
-			mw.appState.Logger.InfoWithType(logging.LogTypeApp, "%s", result.LogMessage)
-		}
-	} else {
-		mw.appState.AppendLog("ERROR", "app", result.LogMessage)
-		if mw.appState.Logger != nil {
-			mw.appState.Logger.Error("%s", result.LogMessage)
-		}
-	}
-
-	// 保存完整模式名称到 Store（供全局使用和恢复）
-	mw.saveSystemProxyState(fullModeName)
-
-	return result.Error
+//   - mode: 系统代理模式
+func (mw *MainWindow) applySystemProxyMode(mode SystemProxyMode) error {
+	// 直接使用核心方法
+	return mw.applySystemProxyModeCore(mode, true)
 }
 
 // updateSystemProxyPort 更新系统代理管理器的端口
@@ -1132,11 +1168,12 @@ func (mw *MainWindow) updateSystemProxyPort() {
 }
 
 // saveSystemProxyState 保存系统代理状态到数据库
-func (mw *MainWindow) saveSystemProxyState(mode string) {
+func (mw *MainWindow) saveSystemProxyState(mode SystemProxyMode) {
 	if mw.appState == nil || mw.appState.ConfigService == nil {
 		return
 	}
-	if err := mw.appState.ConfigService.SetSystemProxyMode(mode); err != nil {
+	// 保存完整模式名称字符串到 Store
+	if err := mw.appState.ConfigService.SetSystemProxyMode(mode.String()); err != nil {
 		if mw.appState.Logger != nil {
 			mw.appState.Logger.Error("保存系统代理状态失败: %v", err)
 		}
@@ -1145,81 +1182,8 @@ func (mw *MainWindow) saveSystemProxyState(mode string) {
 
 // applySystemProxyModeWithoutSave 应用系统代理模式但不保存到 Store（用于恢复时避免重复保存）
 // 直接调用 systemproxy 方法，不通过 ProxyService
-func (mw *MainWindow) applySystemProxyModeWithoutSave(fullModeName string) error {
-	if mw.appState == nil {
-		return fmt.Errorf("appState 未初始化")
-	}
-
-	// 直接调用 systemproxy 方法设置系统代理（不启动代理）
-	proxyPort := 10080
-	if mw.appState.XrayInstance != nil && mw.appState.XrayInstance.IsRunning() {
-		if port := mw.appState.XrayInstance.GetPort(); port > 0 {
-			proxyPort = port
-		}
-	}
-
-	// 确保 SystemProxy 实例已创建
-	if mw.systemProxy == nil {
-		mw.systemProxy = systemproxy.NewSystemProxy("127.0.0.1", proxyPort)
-	} else {
-		mw.systemProxy.UpdateProxy("127.0.0.1", proxyPort)
-	}
-
-	var err error
-	var logMessage string
-
-	switch fullModeName {
-	case SystemProxyModeClear:
-		err = mw.systemProxy.ClearSystemProxy()
-		terminalErr := mw.systemProxy.ClearTerminalProxy()
-		if err == nil && terminalErr == nil {
-			logMessage = "已清除系统代理设置和环境变量代理"
-		} else if err != nil && terminalErr != nil {
-			logMessage = fmt.Sprintf("清除系统代理失败: %v; 清除环境变量代理失败: %v", err, terminalErr)
-			err = fmt.Errorf("清除失败: %v; %v", err, terminalErr)
-		} else if err != nil {
-			logMessage = fmt.Sprintf("清除系统代理失败: %v; 已清除环境变量代理", err)
-		} else {
-			logMessage = fmt.Sprintf("已清除系统代理设置; 清除环境变量代理失败: %v", terminalErr)
-			err = terminalErr
-		}
-
-	case SystemProxyModeAuto:
-		_ = mw.systemProxy.ClearSystemProxy()
-		_ = mw.systemProxy.ClearTerminalProxy()
-		err = mw.systemProxy.SetSystemProxy()
-		if err == nil {
-			logMessage = fmt.Sprintf("已自动配置系统代理: 127.0.0.1:%d", proxyPort)
-		} else {
-			logMessage = fmt.Sprintf("自动配置系统代理失败: %v", err)
-		}
-
-	case SystemProxyModeTerminal:
-		_ = mw.systemProxy.ClearSystemProxy()
-		_ = mw.systemProxy.ClearTerminalProxy()
-		err = mw.systemProxy.SetTerminalProxy()
-		if err == nil {
-			logMessage = fmt.Sprintf("已设置环境变量代理: socks5://127.0.0.1:%d (已写入shell配置文件)", proxyPort)
-		} else {
-			logMessage = fmt.Sprintf("设置环境变量代理失败: %v", err)
-		}
-
-	default:
-		logMessage = fmt.Sprintf("未知的系统代理模式: %s", fullModeName)
-		err = fmt.Errorf("未知的系统代理模式: %s", fullModeName)
-	}
-
-	// 输出日志（恢复时使用 INFO 级别，成功时静默，失败时记录）
-	if err != nil {
-		mw.appState.AppendLog("WARN", "app", fmt.Sprintf("恢复系统代理设置失败: %s", logMessage))
-		if mw.appState.Logger != nil {
-			mw.appState.Logger.Error("%s", logMessage)
-		}
-	}
-	// 成功时静默，避免干扰用户
-
-	// 注意：不保存到 Store，因为这是从 Store 恢复的，避免重复保存
-
-	return err
+func (mw *MainWindow) applySystemProxyModeWithoutSave(mode SystemProxyMode) error {
+	// 使用核心方法，但不保存到 Store
+	return mw.applySystemProxyModeCore(mode, false)
 }
 

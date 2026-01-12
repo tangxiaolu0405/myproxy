@@ -47,6 +47,9 @@ type AppState struct {
 
 	// 日志面板引用 - 用于追加日志
 	LogsPanel *LogsPanel
+
+	// 托盘管理器引用 - 用于刷新托盘菜单
+	TrayManager *TrayManager
 }
 
 // NewAppState 创建并初始化新的应用状态。
@@ -256,6 +259,7 @@ func SaveWindowSize(appState *AppState, size fyne.Size) {
 // SetupTray 设置系统托盘
 func (a *AppState) SetupTray() {
 	trayManager := NewTrayManager(a)
+	a.TrayManager = trayManager // 保存到 AppState 以便其他组件访问
 	fmt.Println("开始设置系统托盘...")
 	trayManager.SetupTray()
 	fmt.Println("系统托盘设置完成")
@@ -273,7 +277,11 @@ func (a *AppState) SetupWindowCloseHandler() {
 			SaveWindowSize(a, a.Window.Canvas().Size())
 		}
 		// 保存布局配置到数据库（通过 Store）
-		a.MainWindow.SaveLayoutConfig()
+		if a.MainWindow != nil {
+			a.MainWindow.SaveLayoutConfig()
+			// 清理资源
+			a.MainWindow.Cleanup()
+		}
 		// 配置已由 Store 自动管理，无需手动保存
 		// 隐藏窗口而不是关闭（Fyne 会自动处理 Dock 图标点击显示窗口）
 		a.Window.Hide()

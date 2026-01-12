@@ -9,9 +9,10 @@ import (
 
 // TrayManager 管理系统托盘
 type TrayManager struct {
-	appState *AppState
-	app      fyne.App
-	window   fyne.Window
+	appState           *AppState
+	app                fyne.App
+	window             fyne.Window
+	proxyModeMenuItems [3]*fyne.MenuItem // 系统代理模式菜单项（清除、系统、终端）
 }
 
 // NewTrayManager 创建系统托盘管理器
@@ -42,25 +43,128 @@ func (tm *TrayManager) SetupTray() {
 		fmt.Println("托盘图标已设置")
 		
 		// 创建托盘菜单
-		menu := fyne.NewMenu("SOCKS5 代理客户端",
-			fyne.NewMenuItem("显示窗口", func() {
-				tm.window.Show()
-				tm.window.RequestFocus()
-			}),
-			fyne.NewMenuItemSeparator(),
-			fyne.NewMenuItem("退出", func() {
-				tm.quit()
-			}),
-		)
-		
-		// 设置托盘菜单
-		desk.SetSystemTrayMenu(menu)
+		tm.createTrayMenu(desk)
 		fmt.Println("托盘菜单已设置")
 	} else {
 		// 如果不支持桌面扩展，记录警告
 		fmt.Println("错误: 应用不支持桌面扩展，无法显示系统托盘")
 		if tm.appState.Logger != nil {
 			tm.appState.Logger.Error("应用不支持桌面扩展，无法显示系统托盘")
+		}
+	}
+}
+
+// createTrayMenu 创建托盘菜单
+func (tm *TrayManager) createTrayMenu(desk desktop.App) {
+	// 创建系统代理模式菜单项（如果尚未创建）
+	if tm.proxyModeMenuItems[0] == nil {
+		tm.proxyModeMenuItems[0] = fyne.NewMenuItem(SystemProxyModeClear.ShortString(), func() {
+			if tm.appState != nil && tm.appState.MainWindow != nil {
+				_ = tm.appState.MainWindow.SetSystemProxyMode(SystemProxyModeClear)
+				// SetSystemProxyMode 内部会调用 RefreshProxyModeMenu，这里不需要再次调用
+			}
+		})
+		tm.proxyModeMenuItems[1] = fyne.NewMenuItem(SystemProxyModeAuto.ShortString(), func() {
+			if tm.appState != nil && tm.appState.MainWindow != nil {
+				_ = tm.appState.MainWindow.SetSystemProxyMode(SystemProxyModeAuto)
+				// SetSystemProxyMode 内部会调用 RefreshProxyModeMenu，这里不需要再次调用
+			}
+		})
+		tm.proxyModeMenuItems[2] = fyne.NewMenuItem(SystemProxyModeTerminal.ShortString(), func() {
+			if tm.appState != nil && tm.appState.MainWindow != nil {
+				_ = tm.appState.MainWindow.SetSystemProxyMode(SystemProxyModeTerminal)
+				// SetSystemProxyMode 内部会调用 RefreshProxyModeMenu，这里不需要再次调用
+			}
+		})
+	}
+
+	// 更新菜单项的选中状态
+	tm.updateProxyModeMenuCheckedState()
+
+	// 创建托盘菜单
+	menu := fyne.NewMenu("SOCKS5 代理客户端",
+		fyne.NewMenuItem("显示窗口", func() {
+			tm.window.Show()
+			tm.window.RequestFocus()
+		}),
+		fyne.NewMenuItemSeparator(),
+		tm.proxyModeMenuItems[0], // 清除代理
+		tm.proxyModeMenuItems[1], // 系统代理
+		tm.proxyModeMenuItems[2], // 终端代理
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("退出", func() {
+			tm.quit()
+		}),
+	)
+
+	// 设置托盘菜单
+	desk.SetSystemTrayMenu(menu)
+}
+
+// RefreshProxyModeMenu 刷新系统代理模式菜单的选中状态（公共方法）
+func (tm *TrayManager) RefreshProxyModeMenu() {
+	tm.refreshProxyModeMenu()
+}
+
+// updateProxyModeMenuCheckedState 更新菜单项的选中状态（不刷新菜单）
+func (tm *TrayManager) updateProxyModeMenuCheckedState() {
+	if tm.appState == nil || tm.appState.MainWindow == nil {
+		return
+	}
+
+	// 获取当前系统代理模式
+	currentMode := tm.appState.MainWindow.GetCurrentSystemProxyMode()
+
+	// 更新菜单项的选中状态
+	for i, item := range tm.proxyModeMenuItems {
+		if item == nil {
+			continue
+		}
+		switch i {
+		case 0: // 清除代理
+			item.Checked = (currentMode == SystemProxyModeClear)
+		case 1: // 系统代理
+			item.Checked = (currentMode == SystemProxyModeAuto)
+		case 2: // 终端代理
+			item.Checked = (currentMode == SystemProxyModeTerminal)
+		}
+	}
+}
+
+// refreshProxyModeMenu 刷新系统代理模式菜单的选中状态（内部方法）
+func (tm *TrayManager) refreshProxyModeMenu() {
+	if tm.appState == nil || tm.appState.MainWindow == nil {
+		return
+	}
+
+	// 获取当前系统代理模式
+	currentMode := tm.appState.MainWindow.GetCurrentSystemProxyMode()
+
+	// 检查是否有状态变化
+	needRefresh := false
+	for i, item := range tm.proxyModeMenuItems {
+		if item == nil {
+			continue
+		}
+		var shouldBeChecked bool
+		switch i {
+		case 0: // 清除代理
+			shouldBeChecked = (currentMode == SystemProxyModeClear)
+		case 1: // 系统代理
+			shouldBeChecked = (currentMode == SystemProxyModeAuto)
+		case 2: // 终端代理
+			shouldBeChecked = (currentMode == SystemProxyModeTerminal)
+		}
+		if item.Checked != shouldBeChecked {
+			needRefresh = true
+			break // 发现变化就退出循环
+		}
+	}
+
+	// 只有在状态变化时才刷新托盘菜单（需要重新设置菜单才能更新选中状态）
+	if needRefresh {
+		if desk, ok := tm.app.(desktop.App); ok {
+			tm.createTrayMenu(desk)
 		}
 	}
 }
