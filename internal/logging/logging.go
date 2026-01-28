@@ -284,6 +284,22 @@ func (l *Logger) Error(format string, args ...interface{}) {
 	l.log(LevelError, LogTypeApp, format, args...)
 }
 
+// GetLogLevel 获取当前日志级别
+func (l *Logger) GetLogLevel() string {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	return strings.ToLower(levelNames[l.level])
+}
+
+// SetLogLevel 设置日志级别
+func (l *Logger) SetLogLevel(level string) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+	if logLevel, err := parseLogLevel(level); err == nil {
+		l.level = logLevel
+	}
+}
+
 // Close 关闭日志记录器
 func (l *Logger) Close() {
 	l.mutex.Lock()

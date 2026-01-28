@@ -12,7 +12,7 @@ import (
 
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf"
-	"myproxy.com/p/internal/database"
+	"myproxy.com/p/internal/model"
 )
 
 // LogCallback 定义日志回调函数类型
@@ -154,17 +154,17 @@ func NewXrayInstanceFromJSON(configJSON []byte) (*XrayInstance, error) {
 func NewXrayInstanceFromJSONWithCallback(configJSON []byte, logCallback LogCallback) (*XrayInstance, error) {
 	var config conf.Config
 	if err := json.Unmarshal(configJSON, &config); err != nil {
-		return nil, fmt.Errorf("解析配置失败: %w", err)
+		return nil, fmt.Errorf("Xray: 解析配置失败: %w", err)
 	}
 
 	pbConfig, err := config.Build()
 	if err != nil {
-		return nil, fmt.Errorf("构建配置失败: %w", err)
+		return nil, fmt.Errorf("Xray: 构建配置失败: %w", err)
 	}
 
 	instance, err := core.New(pbConfig)
 	if err != nil {
-		return nil, fmt.Errorf("创建实例失败: %w", err)
+		return nil, fmt.Errorf("Xray: 创建实例失败: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -196,10 +196,10 @@ func (xi *XrayInstance) SetLogCallback(callback LogCallback) {
 // Start 启动 xray-core 实例
 func (xi *XrayInstance) Start() error {
 	if xi.isRunning {
-		return fmt.Errorf("xray实例已经在运行")
+		return fmt.Errorf("Xray: xray实例已经在运行")
 	}
 	if err := xi.instance.Start(); err != nil {
-		return fmt.Errorf("启动失败: %w", err)
+		return fmt.Errorf("Xray: 启动失败: %w", err)
 	}
 	xi.isRunning = true
 	return nil
@@ -239,7 +239,7 @@ func (xi *XrayInstance) GetInstance() *core.Instance {
 }
 
 // CreateOutboundFromServer 根据服务器配置创建 xray 出站配置
-func CreateOutboundFromServer(server *database.Node) (map[string]interface{}, error) {
+func CreateOutboundFromServer(server *model.Node) (map[string]interface{}, error) {
 	var outbound map[string]interface{}
 
 	switch server.ProtocolType {
@@ -380,7 +380,7 @@ func CreateOutboundFromServer(server *database.Node) (map[string]interface{}, er
 		}
 
 	default:
-		return nil, fmt.Errorf("不支持的协议类型: %s", server.ProtocolType)
+		return nil, fmt.Errorf("Xray: 不支持的协议类型: %s", server.ProtocolType)
 	}
 
 	return outbound, nil
@@ -395,7 +395,7 @@ func getVMessSecurity(security string) string {
 }
 
 // buildVMessStreamSettings 构建 VMess 传输协议配置
-func buildVMessStreamSettings(server *database.Node) map[string]interface{} {
+func buildVMessStreamSettings(server *model.Node) map[string]interface{} {
 	streamSettings := map[string]interface{}{
 		"network": getVMessNetwork(server.VMessNetwork),
 	}
@@ -460,7 +460,7 @@ func getVMessNetwork(network string) string {
 }
 
 // buildSSStreamSettings 构建 Shadowsocks 传输协议配置
-func buildSSStreamSettings(server *database.Node) map[string]interface{} {
+func buildSSStreamSettings(server *model.Node) map[string]interface{} {
 	// 默认使用 tcp
 	network := "tcp"
 	streamSettings := map[string]interface{}{
@@ -477,7 +477,8 @@ func buildSSStreamSettings(server *database.Node) map[string]interface{} {
 // localPort: 本地 SOCKS5 监听端口（默认 10080）
 // server: 服务器配置，用于创建出站配置
 // logFilePath: 日志文件路径（可选，如果为空则不设置日志文件）
-func CreateXrayConfig(localPort int, server *database.Node, logFilePath ...string) ([]byte, error) {
+// whiteList: 白名单规则，指定哪些流量不走代理
+func CreateXrayConfig(localPort int, server *model.Node, logFilePath ...string) ([]byte, error) {
 	if localPort == 0 {
 		localPort = 10080
 	}
@@ -496,7 +497,14 @@ func CreateXrayConfig(localPort int, server *database.Node, logFilePath ...strin
 	// 创建出站配置
 	outbound, err := CreateOutboundFromServer(server)
 	if err != nil {
-		return nil, fmt.Errorf("创建出站配置失败: %w", err)
+		return nil, fmt.Errorf("Xray: 创建出站配置失败: %w", err)
+	}
+
+	// 创建直连出站配置
+	directOutbound := map[string]interface{}{
+		"tag":      "direct",
+		"protocol": "freedom",
+		"settings": map[string]interface{}{},
 	}
 
 	// 构建日志配置
@@ -516,6 +524,9 @@ func CreateXrayConfig(localPort int, server *database.Node, logFilePath ...strin
 		logConfig["access"] = logFilePath[0] // 访问日志也输出到同一文件
 	}
 
+	// 构建路由规则
+	rules := buildRoutingRules()
+
 	// 构建完整配置
 	config := map[string]interface{}{
 		"log": logConfig,
@@ -524,11 +535,211 @@ func CreateXrayConfig(localPort int, server *database.Node, logFilePath ...strin
 		},
 		"outbounds": []interface{}{
 			outbound,
+			directOutbound,
 		},
 		"routing": map[string]interface{}{
-			"rules": []interface{}{},
+			"rules": rules,
+			"domainStrategy": "AsIs",
 		},
 	}
 
 	return json.MarshalIndent(config, "", "  ")
+}
+
+// buildRoutingRules 构建路由规则
+// 添加常见的白名单规则，指定哪些流量不走代理
+func buildRoutingRules() []interface{} {
+	rules := []interface{}{}
+
+	// 添加本地地址白名单
+	localRule := map[string]interface{}{
+		"type": "field",
+		"ip": []string{
+			"127.0.0.0/8",
+			"10.0.0.0/8",
+			"172.16.0.0/12",
+			"192.168.0.0/16",
+			"fc00::/7",
+			"fe80::/10",
+		},
+		"outboundTag": "direct",
+	}
+	rules = append(rules, localRule)
+
+	// 添加常见的国内域名白名单
+	chinaRule := map[string]interface{}{
+		"type": "field",
+		"domain": []string{
+			"domain:baidu.com",
+			"domain:qq.com",
+			"domain:weixin.com",
+			"domain:taobao.com",
+			"domain:jd.com",
+			"domain:aliyun.com",
+			"domain:163.com",
+			"domain:sina.com",
+			"domain:sohu.com",
+			"domain:youku.com",
+			"domain:tudou.com",
+			"domain:iqiyi.com",
+			"domain:cntv.cn",
+			"domain:mi.com",
+			"domain:huawei.com",
+			"domain:oppo.com",
+			"domain:vivo.com",
+			"domain:meituan.com",
+			"domain:dianping.com",
+			"domain:amap.com",
+			"domain:ctrip.com",
+			"domain:elong.com",
+			"domain:tongcheng.com",
+			"domain:qunar.com",
+			"domain:kaola.com",
+			"domain:suning.com",
+			"domain:gome.com.cn",
+			"domain:tmall.com",
+			"domain:alicdn.com",
+			"domain:cdn.baidustatic.com",
+			"domain:qqstatic.com",
+			"domain:wxstatic.com",
+			"domain:taobaocdn.com",
+			"domain:jdcdn.com",
+			"domain:aliyuncdn.com",
+			"domain:163cdn.com",
+			"domain:sinaimg.cn",
+			"domain:sohu.com",
+			"domain:优酷.com",
+			"domain:土豆.com",
+			"domain:爱奇艺.com",
+			"domain:央视.com",
+			"domain:小米.com",
+			"domain:华为.com",
+			"domain:OPPO.com",
+			"domain:vivo.com",
+			"domain:美团.com",
+			"domain:大众点评.com",
+			"domain:高德地图.com",
+			"domain:携程.com",
+			"domain:艺龙.com",
+			"domain:同程.com",
+			"domain:去哪儿.com",
+			"domain:考拉.com",
+			"domain:苏宁.com",
+			"domain:国美.com.cn",
+			"domain:天猫.com",
+			"domain:阿里巴巴.com",
+			"domain:百度.com",
+			"domain:腾讯.com",
+			"domain:微信.com",
+			"domain:淘宝.com",
+			"domain:京东.com",
+			"domain:阿里云.com",
+			"domain:网易.com",
+			"domain:新浪.com",
+			"domain:搜狐.com",
+		},
+		"outboundTag": "direct",
+	}
+	rules = append(rules, chinaRule)
+
+	// 添加常见的国内 IP 白名单
+	chinaIPRule := map[string]interface{}{
+		"type": "field",
+		"ip": []string{
+			"202.102.128.0/16",
+			"202.106.0.0/16",
+			"202.108.0.0/16",
+			"202.112.0.0/16",
+			"202.114.0.0/16",
+			"202.117.0.0/16",
+			"202.118.0.0/16",
+			"202.119.0.0/16",
+			"202.120.0.0/16",
+			"202.121.0.0/16",
+			"202.122.0.0/16",
+			"202.123.0.0/16",
+			"202.124.0.0/16",
+			"202.125.0.0/16",
+			"202.126.0.0/16",
+			"202.127.0.0/16",
+			"210.22.0.0/16",
+			"210.24.0.0/16",
+			"210.25.0.0/16",
+			"210.26.0.0/16",
+			"210.27.0.0/16",
+			"210.28.0.0/16",
+			"210.29.0.0/16",
+			"210.30.0.0/16",
+			"210.31.0.0/16",
+			"210.51.0.0/16",
+			"210.72.0.0/16",
+			"210.73.0.0/16",
+			"210.74.0.0/16",
+			"210.75.0.0/16",
+			"210.76.0.0/16",
+			"210.77.0.0/16",
+			"210.78.0.0/16",
+			"210.79.0.0/16",
+			"210.80.0.0/16",
+			"210.81.0.0/16",
+			"210.82.0.0/16",
+			"210.83.0.0/16",
+			"210.84.0.0/16",
+			"210.85.0.0/16",
+			"210.86.0.0/16",
+			"210.87.0.0/16",
+			"210.88.0.0/16",
+			"210.89.0.0/16",
+			"210.90.0.0/16",
+			"210.91.0.0/16",
+			"210.92.0.0/16",
+			"210.93.0.0/16",
+			"210.94.0.0/16",
+			"210.95.0.0/16",
+			"210.96.0.0/16",
+			"210.97.0.0/16",
+			"210.98.0.0/16",
+			"210.99.0.0/16",
+			"211.64.0.0/16",
+			"211.65.0.0/16",
+			"211.66.0.0/16",
+			"211.67.0.0/16",
+			"211.68.0.0/16",
+			"211.69.0.0/16",
+			"211.70.0.0/16",
+			"211.71.0.0/16",
+			"211.72.0.0/16",
+			"211.73.0.0/16",
+			"211.74.0.0/16",
+			"211.75.0.0/16",
+			"211.76.0.0/16",
+			"211.77.0.0/16",
+			"211.78.0.0/16",
+			"211.79.0.0/16",
+			"211.80.0.0/16",
+			"211.81.0.0/16",
+			"211.82.0.0/16",
+			"211.83.0.0/16",
+			"211.84.0.0/16",
+			"211.85.0.0/16",
+			"211.86.0.0/16",
+			"211.87.0.0/16",
+			"211.88.0.0/16",
+			"211.89.0.0/16",
+			"211.90.0.0/16",
+			"211.91.0.0/16",
+			"211.92.0.0/16",
+			"211.93.0.0/16",
+			"211.94.0.0/16",
+			"211.95.0.0/16",
+			"211.96.0.0/16",
+			"211.97.0.0/16",
+			"211.98.0.0/16",
+			"211.99.0.0/16",
+		},
+		"outboundTag": "direct",
+	}
+	rules = append(rules, chinaIPRule)
+
+	return rules
 }

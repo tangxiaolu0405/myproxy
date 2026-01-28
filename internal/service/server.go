@@ -3,7 +3,7 @@ package service
 import (
 	"fmt"
 
-	"myproxy.com/p/internal/database"
+	"myproxy.com/p/internal/model"
 	"myproxy.com/p/internal/store"
 )
 
@@ -27,7 +27,7 @@ func NewServerService(store *store.Store) *ServerService {
 // 如果未选择订阅或选择了全部订阅（ID为0），返回所有服务器。
 // 否则返回指定订阅下的服务器。
 // 返回：服务器列表
-func (ss *ServerService) ListServers() []database.Node {
+func (ss *ServerService) ListServers() []model.Node {
 	if ss.store == nil || ss.store.Nodes == nil {
 		return nil
 	}
@@ -38,7 +38,7 @@ func (ss *ServerService) ListServers() []database.Node {
 	// 如果未选择订阅或选择了全部订阅（ID为0），返回所有服务器
 	if selectedSubscriptionID == 0 {
 		nodes := ss.store.Nodes.GetAll()
-		result := make([]database.Node, len(nodes))
+		result := make([]model.Node, len(nodes))
 		for i, node := range nodes {
 			result[i] = *node
 		}
@@ -50,7 +50,7 @@ func (ss *ServerService) ListServers() []database.Node {
 	if err != nil {
 		// 如果获取失败，返回所有服务器作为后备
 		nodes := ss.store.Nodes.GetAll()
-		result := make([]database.Node, len(nodes))
+		result := make([]model.Node, len(nodes))
 		for i, node := range nodes {
 			result[i] = *node
 		}
@@ -64,14 +64,24 @@ func (ss *ServerService) ListServers() []database.Node {
 // 参数：
 //   - subscriptionID: 订阅ID
 // 返回：服务器列表和错误（如果有）
-func (ss *ServerService) GetServersBySubscriptionID(subscriptionID int64) ([]database.Node, error) {
-	// 从数据库获取指定订阅下的服务器
-	servers, err := database.GetServersBySubscriptionID(subscriptionID)
+func (ss *ServerService) GetServersBySubscriptionID(subscriptionID int64) ([]model.Node, error) {
+	if ss.store == nil || ss.store.Nodes == nil {
+		return nil, fmt.Errorf("服务器服务: Store 未初始化")
+	}
+
+	// 通过 Store 获取指定订阅下的服务器
+	nodes, err := ss.store.Nodes.GetBySubscriptionID(subscriptionID)
 	if err != nil {
 		return nil, fmt.Errorf("获取订阅服务器列表失败: %w", err)
 	}
 
-	return servers, nil
+	// 转换为值切片
+	result := make([]model.Node, len(nodes))
+	for i, node := range nodes {
+		result[i] = *node
+	}
+
+	return result, nil
 }
 
 // UpdateServerDelay 更新服务器延迟。
@@ -81,7 +91,7 @@ func (ss *ServerService) GetServersBySubscriptionID(subscriptionID int64) ([]dat
 // 返回：错误（如果有）
 func (ss *ServerService) UpdateServerDelay(id string, delay int) error {
 	if ss.store == nil || ss.store.Nodes == nil {
-		return fmt.Errorf("Store 未初始化")
+		return fmt.Errorf("服务器服务: Store 未初始化")
 	}
 
 	// 通过 Store 更新延迟（会自动更新数据库并刷新 Store）
@@ -92,52 +102,41 @@ func (ss *ServerService) UpdateServerDelay(id string, delay int) error {
 // 参数：
 //   - server: 服务器节点
 // 返回：错误（如果有）
-func (ss *ServerService) AddServer(server database.Node) error {
-	// 添加到数据库（subscription_id 为 nil，表示手动添加的服务器）
-	if err := database.AddOrUpdateServer(server, nil); err != nil {
-		return fmt.Errorf("添加服务器到数据库失败: %w", err)
+func (ss *ServerService) AddServer(server model.Node) error {
+	if ss.store == nil || ss.store.Nodes == nil {
+		return fmt.Errorf("服务器服务: Store 未初始化")
 	}
 
-	// 刷新 Store
-	if ss.store != nil && ss.store.Nodes != nil {
-		return ss.store.Nodes.Load()
-	}
-
-	return nil
+	// 通过 Store 添加服务器
+	return ss.store.Nodes.Add(&server)
 }
 
 // UpdateServer 更新服务器信息。
 // 参数：
 //   - server: 服务器节点
 // 返回：错误（如果有）
-func (ss *ServerService) UpdateServer(server database.Node) error {
+func (ss *ServerService) UpdateServer(server model.Node) error {
 	// 检查服务器是否存在
 	if ss.store == nil || ss.store.Nodes == nil {
-		return fmt.Errorf("Store 未初始化")
+		return fmt.Errorf("服务器服务: Store 未初始化")
 	}
 
 	_, err := ss.store.Nodes.Get(server.ID)
 	if err != nil {
-		return fmt.Errorf("服务器不存在: %s", server.ID)
+		return fmt.Errorf("服务器服务: 服务器不存在: %s", server.ID)
 	}
 
-	// 更新数据库（保留原有的 subscription_id）
-	// 使用 nil 作为 subscriptionID，AddOrUpdateServer 会自动保持原有的 subscription_id
-	if err := database.AddOrUpdateServer(server, nil); err != nil {
-		return fmt.Errorf("更新服务器到数据库失败: %w", err)
-	}
-
-	// 刷新 Store
-	return ss.store.Nodes.Load()
+	// 通过 Store 更新服务器
+	return ss.store.Nodes.Update(&server)
 }
 
 // GetServer 获取服务器。
 // 参数：
 //   - id: 服务器ID
 // 返回：服务器节点和错误（如果有）
-func (ss *ServerService) GetServer(id string) (*database.Node, error) {
+func (ss *ServerService) GetServer(id string) (*model.Node, error) {
 	if ss.store == nil || ss.store.Nodes == nil {
-		return nil, fmt.Errorf("Store 未初始化")
+		return nil, fmt.Errorf("服务器服务: Store 未初始化")
 	}
 
 	return ss.store.Nodes.Get(id)
