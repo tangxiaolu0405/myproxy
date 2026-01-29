@@ -25,7 +25,7 @@ func (p *proxyModeButtonLayout) Layout(objects []fyne.CanvasObject, containerSiz
 
 	// 三个按钮平分宽度，每个占 1/3
 	// 使用较小的间距，Mac 简约风格
-	spacing := float32(4) // 按钮之间的间距
+	spacing := float32(4)       // 按钮之间的间距
 	totalSpacing := spacing * 2 // 两个间距
 	availableWidth := containerSize.Width - totalSpacing
 	buttonWidth := availableWidth / 3
@@ -70,17 +70,17 @@ func (m *modeButtonLayout) Layout(objects []fyne.CanvasObject, containerSize fyn
 	if len(objects) != 2 {
 		return
 	}
-	
+
 	iconArea := objects[0]
 	buttonArea := objects[1]
-	
+
 	// 图标区域：占10%宽度
 	iconWidth := containerSize.Width * 0.1
 	if iconArea != nil {
 		iconArea.Resize(fyne.NewSize(iconWidth, containerSize.Height))
 		iconArea.Move(fyne.NewPos(0, 0))
 	}
-	
+
 	// 按钮组区域：占90%宽度，从10%位置开始
 	buttonWidth := containerSize.Width * 0.9
 	buttonX := containerSize.Width * 0.1
@@ -94,10 +94,10 @@ func (m *modeButtonLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	if len(objects) < 2 {
 		return fyne.NewSize(0, 0)
 	}
-	
+
 	iconMin := objects[0].MinSize()
 	buttonMin := objects[1].MinSize()
-	
+
 	// 最小宽度：图标区域最小宽度 + 按钮组区域最小宽度（按比例）
 	totalWidth := fyne.Max(iconMin.Width/0.1, buttonMin.Width/0.9)
 	return fyne.NewSize(totalWidth, fyne.Max(iconMin.Height, buttonMin.Height))
@@ -110,17 +110,17 @@ func (n *nodeNameLayout) Layout(objects []fyne.CanvasObject, containerSize fyne.
 	if len(objects) != 2 {
 		return
 	}
-	
+
 	iconArea := objects[0]
 	nameArea := objects[1]
-	
+
 	// 图标区域：占10%宽度
 	iconWidth := containerSize.Width * 0.1
 	if iconArea != nil {
 		iconArea.Resize(fyne.NewSize(iconWidth, containerSize.Height))
 		iconArea.Move(fyne.NewPos(0, 0))
 	}
-	
+
 	// 节点名称区域：占90%宽度，从10%位置开始
 	nameWidth := containerSize.Width * 0.9
 	nameX := containerSize.Width * 0.1
@@ -134,10 +134,10 @@ func (n *nodeNameLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	if len(objects) < 2 {
 		return fyne.NewSize(0, 0)
 	}
-	
+
 	iconMin := objects[0].MinSize()
 	nameMin := objects[1].MinSize()
-	
+
 	// 最小宽度：图标区域最小宽度 + 节点名称区域最小宽度（按比例）
 	// 如果图标区域最小宽度为 w，则总宽度至少为 w / 0.1
 	// 如果节点名称区域最小宽度为 w，则总宽度至少为 w / 0.9
@@ -149,16 +149,16 @@ func (n *nodeNameLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 type PageType int
 
 const (
-	PageTypeHome PageType = iota // 主界面
-	PageTypeNode                 // 节点列表页面
-	PageTypeSettings             // 设置页面
-	PageTypeSubscription         // 订阅管理页面
+	PageTypeHome         PageType = iota // 主界面
+	PageTypeNode                         // 节点列表页面
+	PageTypeSettings                     // 设置页面
+	PageTypeSubscription                 // 订阅管理页面
 )
 
 // PageStack 路由栈结构，用于管理页面导航历史
 type PageStack struct {
-	stack      []PageType // 页面栈
-	maxDepth   int        // 最大深度限制（0 表示无限制）
+	stack    []PageType // 页面栈
+	maxDepth int        // 最大深度限制（0 表示无限制）
 }
 
 const (
@@ -311,29 +311,30 @@ func ParseSystemProxyModeFromShort(shortModeName string) SystemProxyMode {
 // MainWindow 管理主窗口的布局和各个面板组件。
 // 它负责协调订阅管理、服务器列表、日志显示和状态信息四个主要区域的显示。
 type MainWindow struct {
-	appState          *AppState
-	logsPanel         *LogsPanel
-	pageStack         *PageStack      // 路由栈，用于管理页面导航历史
-	currentPage       PageType        // 当前页面类型
+	appState    *AppState
+	logsPanel   *LogsPanel
+	pageStack   *PageStack // 路由栈，用于管理页面导航历史
+	currentPage PageType   // 当前页面类型
 
 	// 单窗口多页面：通过 SetContent() 在一个窗口内切换不同的 Container
-	homePage         fyne.CanvasObject // 主界面（极简一键开关）
+	homePage fyne.CanvasObject // 主界面（极简一键开关）
 
 	nodePage         fyne.CanvasObject // 节点列表页面
-	nodePageInstance *NodePage // 节点列表页面实例
-	
-	settingsPage     fyne.CanvasObject // 设置页面
+	nodePageInstance *NodePage         // 节点列表页面实例
 
-	subscriptionPage fyne.CanvasObject // 订阅管理页面
+	settingsPage         fyne.CanvasObject // 设置页面
+	settingsPageInstance *SettingsPage     // 设置页面实例
+
+	subscriptionPage         fyne.CanvasObject // 订阅管理页面
 	subscriptionPageInstance *SubscriptionPage // 订阅管理页面实例
 
 	// 主界面状态UI组件（使用双向绑定）
-	mainToggleButton *CircularButton    // 主开关按钮（连接/断开，圆形，替代了状态显示）
-	serverNameLabel  *widget.Label        // 服务器名称标签（绑定到 ServerNameBinding）
-	proxyModeButtons [3]*widget.Button    // 系统代理模式按钮组（清除、系统、终端）
+	mainToggleButton *CircularButton          // 主开关按钮（连接/断开，圆形，替代了状态显示）
+	serverNameLabel  *widget.Label            // 服务器名称标签（绑定到 ServerNameBinding）
+	proxyModeButtons [3]*widget.Button        // 系统代理模式按钮组（清除、系统、终端）
 	systemProxy      *systemproxy.SystemProxy // 系统代理管理器
-	trafficChart     *TrafficChart       // 实时流量图组件
-	
+	trafficChart     *TrafficChart            // 实时流量图组件
+
 	// 状态标志
 	systemProxyRestored bool // 标记系统代理状态是否已恢复（避免重复恢复）
 }
@@ -346,8 +347,8 @@ type MainWindow struct {
 // 返回：初始化后的主窗口实例
 func NewMainWindow(appState *AppState) *MainWindow {
 	mw := &MainWindow{
-		appState:   appState,
-		pageStack:  NewPageStack(),
+		appState:    appState,
+		pageStack:   NewPageStack(),
 		currentPage: PageTypeHome,
 	}
 
@@ -368,6 +369,7 @@ func NewMainWindow(appState *AppState) *MainWindow {
 
 	return mw
 }
+
 // Build 构建并返回主窗口的 UI 组件树。
 // 该方法使用自定义 Border 布局，支持百分比控制各区域的大小。
 // 返回：主窗口的根容器组件
@@ -397,7 +399,7 @@ func (mw *MainWindow) Refresh() {
 	if mw.appState != nil {
 		mw.appState.UpdateProxyStatus() // 更新绑定数据（serverNameLabel 会自动更新）
 		if mw.mainToggleButton != nil {
-			mw.updateMainToggleButton() 
+			mw.updateMainToggleButton()
 		}
 		// 订阅标签绑定由 Store 自动管理，无需手动更新
 	}
@@ -409,7 +411,7 @@ func (mw *MainWindow) SaveLayoutConfig() {
 	if mw.appState == nil || mw.appState.Store == nil || mw.appState.Store.Layout == nil {
 		return
 	}
-	
+
 	config := mw.GetLayoutConfig()
 	_ = mw.appState.Store.Layout.Save(config)
 }
@@ -437,7 +439,8 @@ func (mw *MainWindow) initPages() {
 	mw.homePage = mw.buildHomePage()
 
 	// 设置页面（settingsPage）：顶部返回 + 标题，下方预留设置内容
-	mw.settingsPage = mw.buildSettingsPage()
+	mw.settingsPageInstance = NewSettingsPage(mw.appState)
+	mw.settingsPage = mw.settingsPageInstance.Build()
 
 	// 节点列表页面（nodePage）：服务器列表和管理功能
 	mw.nodePageInstance = NewNodePage(mw.appState)
@@ -469,31 +472,35 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	if mw.mainToggleButton == nil {
 		// 计算按钮尺寸（窗口大小的1/10）
 		buttonSize := mw.calculateButtonSize()
-		
-		// 创建圆形按钮（使用 DownloadIcon 作为链接图标）
-		mw.mainToggleButton = NewCircularButton(theme.DownloadIcon(), mw.onToggleProxy, buttonSize)
+
+		// 创建圆形按钮（使用连接/断开图标，根据状态变化）
+		if mw.appState != nil && mw.appState.XrayInstance != nil && mw.appState.XrayInstance.IsRunning() {
+			mw.mainToggleButton = NewCircularButton(theme.CancelIcon(), mw.onToggleProxy, buttonSize)
+		} else {
+			mw.mainToggleButton = NewCircularButton(theme.ConfirmIcon(), mw.onToggleProxy, buttonSize)
+		}
 		mw.mainToggleButton.SetImportance(widget.LowImportance)
 		mw.updateMainToggleButton()
 	}
 
 	// 创建系统代理模式按钮组（三个按钮平分宽度）
 	if mw.proxyModeButtons[0] == nil {
-		// 创建三个按钮
-		mw.proxyModeButtons[0] = widget.NewButton(SystemProxyModeClear.ShortString(), func() {
+		// 创建三个按钮，使用不同的图标增强视觉识别
+		mw.proxyModeButtons[0] = widget.NewButtonWithIcon(SystemProxyModeClear.ShortString(), theme.DeleteIcon(), func() {
 			mw.onProxyModeButtonClicked(SystemProxyModeClear)
 		})
-		mw.proxyModeButtons[1] = widget.NewButton(SystemProxyModeAuto.ShortString(), func() {
+		mw.proxyModeButtons[1] = widget.NewButtonWithIcon(SystemProxyModeAuto.ShortString(), theme.ComputerIcon(), func() {
 			mw.onProxyModeButtonClicked(SystemProxyModeAuto)
 		})
-		mw.proxyModeButtons[2] = widget.NewButton(SystemProxyModeTerminal.ShortString(), func() {
+		mw.proxyModeButtons[2] = widget.NewButtonWithIcon(SystemProxyModeTerminal.ShortString(), theme.SettingsIcon(), func() {
 			mw.onProxyModeButtonClicked(SystemProxyModeTerminal)
 		})
-		
+
 		// 设置按钮初始重要性（所有按钮初始为 LowImportance，选中状态由 updateProxyModeButtonsState 管理）
 		for i := range mw.proxyModeButtons {
 			mw.proxyModeButtons[i].Importance = widget.LowImportance
 		}
-		
+
 		// 从 Store 恢复系统代理模式选择
 		if mw.appState != nil && mw.appState.ConfigService != nil {
 			savedModeStr := mw.appState.ConfigService.GetSystemProxyMode()
@@ -503,7 +510,7 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 			}
 		}
 	}
-	
+
 	// 恢复系统代理状态（仅在首次创建时，避免重复应用）
 	// 注意：按钮状态已在创建按钮时恢复，这里只应用实际的系统代理设置
 	if !mw.systemProxyRestored {
@@ -526,25 +533,31 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		mw.ShowNodePage()
 	})
 	nodeInfoButton.Importance = widget.LowImportance
-	
+
 	// 节点信息内容：仅保留一个图标和节点名称（不显示延迟）
 	// 使用自定义布局确保：图标区域占10%，节点名称区域占90%
 	iconWithSpacer := container.NewHBox(
 		widget.NewIcon(theme.ComputerIcon()),
 		NewSpacer(SpacingSmall),
 	)
-	
+
 	// 节点名称区域：占90%宽度，确保占满
 	nodeNameArea := container.NewWithoutLayout(mw.serverNameLabel)
-	
+
 	// 使用自定义布局精确控制：图标10%，节点名称90%
 	nodeInfoContent := container.NewWithoutLayout(iconWithSpacer, nodeNameArea)
 	nodeInfoContent.Layout = &nodeNameLayout{}
-	
-	// 节点信息区域：占满宽度，留一些边距
+
+	// 节点信息区域：占满宽度，留一些边距，添加分隔线提升视觉效果
 	nodeInfoArea := container.NewStack(
 		nodeInfoButton,
-		container.NewPadded(nodeInfoContent),
+		container.NewPadded(container.NewBorder(
+			widget.NewSeparator(),
+			widget.NewSeparator(),
+			nil,
+			nil,
+			nodeInfoContent,
+		)),
 	)
 
 	// 模式选择：使用图标和三个按钮，按钮组占90%宽度，Mac 简约风格
@@ -554,7 +567,7 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		modeIcon,
 		NewSpacer(SpacingSmall),
 	)
-	
+
 	// 按钮组区域：占90%宽度
 	buttonGroup := container.NewWithoutLayout(
 		mw.proxyModeButtons[0],
@@ -562,7 +575,7 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		mw.proxyModeButtons[2],
 	)
 	buttonGroup.Layout = &proxyModeButtonLayout{}
-	
+
 	// 使用自定义布局：图标10%，按钮组90%
 	modeInfo := container.NewWithoutLayout(iconArea, buttonGroup)
 	modeInfo.Layout = &modeButtonLayout{}
@@ -607,52 +620,23 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	)
 }
 
-
-// buildSettingsPage 构建设置页面 Container（settingsPage）
-func (mw *MainWindow) buildSettingsPage() fyne.CanvasObject {
-	// 顶部栏：返回上一个页面 + 标题
-	backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
-		mw.Back()
-	})
-	backBtn.Importance = widget.LowImportance
-	titleLabel := NewTitleLabel("设置")
-	headerBar := container.NewPadded(container.NewHBox(
-		backBtn,
-		NewSpacer(SpacingLarge),
-		titleLabel,
-		layout.NewSpacer(),
-	))
-
-	// 这里暂时使用占位内容，后续可以替换为真正的设置视图
-	placeholder := widget.NewLabel("设置界面开发中（Settings View Placeholder）")
-	center := container.NewCenter(placeholder)
-
-	return container.NewBorder(
-		headerBar,
-		nil,
-		nil,
-		nil,
-		center,
-	)
-}
-
 // showPage 通用的页面切换方法，会将当前页面压入栈，然后切换到新页面
 func (mw *MainWindow) showPage(pageType PageType, pageContent fyne.CanvasObject, pushCurrent bool) {
 	if mw == nil || mw.appState == nil || mw.appState.Window == nil {
 		return
 	}
-	
+
 	// 如果需要压入当前页面（通常从其他页面跳转时需要）
 	if pushCurrent && mw.currentPage != pageType {
 		mw.pageStack.Push(mw.currentPage)
 	}
-	
+
 	// 更新当前页面类型
 	mw.currentPage = pageType
-	
+
 	// 设置内容
 	mw.appState.Window.SetContent(pageContent)
-	
+
 	// 从 Store 读取窗口大小并应用（在SetContent之后，避免内容的最小尺寸要求导致窗口变大）
 	defaultSize := fyne.NewSize(420, 520)
 	windowSize := LoadWindowSize(mw.appState, defaultSize)
@@ -666,7 +650,7 @@ func (mw *MainWindow) Back() {
 	if mw == nil || mw.appState == nil || mw.appState.Window == nil {
 		return
 	}
-	
+
 	// 从栈中弹出上一个页面
 	prevPageType, ok := mw.pageStack.Pop()
 	if !ok {
@@ -674,7 +658,7 @@ func (mw *MainWindow) Back() {
 		mw.navigateToPage(PageTypeHome, false)
 		return
 	}
-	
+
 	// 切换到上一个页面（不压栈，因为这是返回操作）
 	mw.navigateToPage(prevPageType, false)
 }
@@ -682,7 +666,7 @@ func (mw *MainWindow) Back() {
 // navigateToPage 导航到指定页面（内部方法，不压栈）
 func (mw *MainWindow) navigateToPage(pageType PageType, pushCurrent bool) {
 	var pageContent fyne.CanvasObject
-	
+
 	switch pageType {
 	case PageTypeHome:
 		if mw.homePage == nil {
@@ -709,7 +693,8 @@ func (mw *MainWindow) navigateToPage(pageType PageType, pushCurrent bool) {
 		pageContent = mw.nodePage
 	case PageTypeSettings:
 		if mw.settingsPage == nil {
-			mw.settingsPage = mw.buildSettingsPage()
+			mw.settingsPageInstance = NewSettingsPage(mw.appState)
+			mw.settingsPage = mw.settingsPageInstance.Build()
 		}
 		pageContent = mw.settingsPage
 	case PageTypeSubscription:
@@ -730,7 +715,7 @@ func (mw *MainWindow) navigateToPage(pageType PageType, pushCurrent bool) {
 		pageContent = mw.homePage
 		pageType = PageTypeHome
 	}
-	
+
 	mw.showPage(pageType, pageContent, pushCurrent)
 }
 
@@ -810,7 +795,7 @@ func (mw *MainWindow) startProxy() {
 
 	// 调用 service 启动代理
 	result := mw.appState.XrayControlService.StartProxy(mw.appState.XrayInstance, unifiedLogPath)
-	
+
 	if result.Error != nil {
 		mw.logAndShowError("启动代理失败", result.Error)
 		if mw.appState != nil {
@@ -929,29 +914,29 @@ func (mw *MainWindow) calculateButtonSize() float32 {
 		// 默认尺寸
 		return 100
 	}
-	
+
 	// 获取窗口尺寸
 	windowSize := mw.appState.Window.Canvas().Size()
 	if windowSize.Width == 0 && windowSize.Height == 0 {
 		// 如果窗口尺寸未初始化，使用默认尺寸
 		return 100
 	}
-	
+
 	// 取窗口宽度和高度的较小值，然后除以6（从10改为6，扩大按钮）
 	minDimension := windowSize.Width
 	if windowSize.Height < windowSize.Width {
 		minDimension = windowSize.Height
 	}
-	
+
 	buttonSize := minDimension / 6
-	
+
 	// 设置最小和最大尺寸限制（提高最小和最大尺寸）
 	if buttonSize < 80 {
 		buttonSize = 80
 	} else if buttonSize > 180 {
 		buttonSize = 180
 	}
-	
+
 	return buttonSize
 }
 
@@ -966,13 +951,15 @@ func (mw *MainWindow) updateMainToggleButton() {
 		isRunning = mw.appState.XrayInstance.IsRunning()
 	}
 
-	// 更新按钮重要性：成功时为 SuccessImportance，未连接时为 LowImportance
+	// 更新按钮图标：运行中使用 CancelIcon，未运行时使用 ConfirmIcon
 	if isRunning {
+		mw.mainToggleButton.SetIcon(theme.CancelIcon())
 		mw.mainToggleButton.SetImportance(widget.SuccessImportance)
 	} else {
+		mw.mainToggleButton.SetIcon(theme.ConfirmIcon())
 		mw.mainToggleButton.SetImportance(widget.LowImportance)
 	}
-	
+
 	// 更新按钮尺寸（响应窗口大小变化）
 	buttonSize := mw.calculateButtonSize()
 	mw.mainToggleButton.SetSize(buttonSize)
@@ -982,6 +969,7 @@ func (mw *MainWindow) updateMainToggleButton() {
 // 参数：
 //   - mode: 系统代理模式
 //   - saveToStore: 是否保存到 Store
+//
 // 返回值：错误信息
 func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore bool) error {
 	if mw.appState == nil {
@@ -1142,7 +1130,6 @@ func (mw *MainWindow) updateProxyModeButtonsState(mode SystemProxyMode) {
 	}
 }
 
-
 // applySystemProxyMode 应用系统代理模式（通过 ProxyService，已废弃，保留用于兼容性）
 // 参数：
 //   - mode: 系统代理模式
@@ -1186,4 +1173,3 @@ func (mw *MainWindow) applySystemProxyModeWithoutSave(mode SystemProxyMode) erro
 	// 使用核心方法，但不保存到 Store
 	return mw.applySystemProxyModeCore(mode, false)
 }
-

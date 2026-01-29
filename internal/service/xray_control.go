@@ -43,7 +43,7 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 	if xcs.store == nil || xcs.store.Nodes == nil {
 		return &StartProxyResult{
 			LogMessage: "启动代理失败: Store 未初始化",
-			Error:      fmt.Errorf("Store 未初始化"),
+			Error:      fmt.Errorf("Xray控制服务: Store 未初始化"),
 		}
 	}
 
@@ -52,7 +52,7 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 	if selectedNode == nil {
 		return &StartProxyResult{
 			LogMessage: "启动代理失败: 未选中服务器",
-			Error:      fmt.Errorf("未选中服务器"),
+			Error:      fmt.Errorf("Xray控制服务: 未选中服务器"),
 		}
 	}
 
@@ -81,7 +81,7 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 		}
 		return &StartProxyResult{
 			LogMessage: logMsg,
-			Error:      fmt.Errorf("创建xray配置失败: %w", err),
+			Error:      fmt.Errorf("Xray控制服务: 创建xray配置失败: %w", err),
 		}
 	}
 
@@ -106,7 +106,7 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 		}
 		return &StartProxyResult{
 			LogMessage: logMsg,
-			Error:      fmt.Errorf("创建xray实例失败: %w", err),
+			Error:      fmt.Errorf("Xray控制服务: 创建xray实例失败: %w", err),
 		}
 	}
 
@@ -120,7 +120,7 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 		return &StartProxyResult{
 			XrayInstance: xrayInstance, // 即使启动失败，也返回实例（可能需要清理）
 			LogMessage:   logMsg,
-			Error:        fmt.Errorf("启动xray实例失败: %w", err),
+			Error:        fmt.Errorf("Xray控制服务: 启动xray实例失败: %w", err),
 		}
 	}
 
@@ -180,7 +180,7 @@ func (xcs *XrayControlService) StopProxy(instance *xray.XrayInstance) *StopProxy
 		}
 		return &StopProxyResult{
 			LogMessage: logMsg,
-			Error:      fmt.Errorf("停止xray代理失败: %w", err),
+			Error:      fmt.Errorf("Xray控制服务: 停止xray代理失败: %w", err),
 		}
 	}
 

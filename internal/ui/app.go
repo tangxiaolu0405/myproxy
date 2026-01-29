@@ -86,8 +86,8 @@ func NewAppState() *AppState {
 		ProxyStatusBinding: dataStore.ProxyStatus.ProxyStatusBinding,
 		PortBinding:        dataStore.ProxyStatus.PortBinding,
 		ServerNameBinding:  dataStore.ProxyStatus.ServerNameBinding,
-		// ProxyService 将在 XrayInstance 创建后初始化
-		ProxyService: nil,
+		// 初始化 ProxyService
+		ProxyService: service.NewProxyService(nil),
 		// XrayControlService 使用临时日志回调，Logger 创建后会更新
 		XrayControlService: service.NewXrayControlService(dataStore, logCallback),
 	}
@@ -164,7 +164,7 @@ func (a *AppState) InitApp() error {
 // 注意：必须在 MainWindow 和 LogsPanel 创建后调用此方法。
 func (a *AppState) InitLogger() error {
 	if a.LogsPanel == nil {
-		return fmt.Errorf("LogsPanel 未初始化，无法创建 Logger")
+		return fmt.Errorf("应用状态: LogsPanel 未初始化，无法创建 Logger")
 	}
 
 	// 创建日志回调函数，用于实时更新UI（确保日志文件写入和UI显示一致）
@@ -189,7 +189,7 @@ func (a *AppState) InitLogger() error {
 
 	logger, err := logging.NewLogger(logFile, logLevel == "debug", logLevel, logCallback)
 	if err != nil {
-		return fmt.Errorf("初始化日志失败: %w", err)
+		return fmt.Errorf("应用状态: 初始化日志失败: %w", err)
 	}
 
 	// 设置 logger 到 appState
@@ -295,7 +295,7 @@ func (a *AppState) SetupWindowCloseHandler() {
 func (a *AppState) Startup() error {
 	// 1. 初始化 Fyne 应用和窗口，加载 Store 数据
 	if err := a.InitApp(); err != nil {
-		return fmt.Errorf("初始化应用失败: %w", err)
+		return fmt.Errorf("应用状态: 初始化应用失败: %w", err)
 	}
 
 	// 2. 创建主窗口（此时 LogsPanel 已创建）
@@ -304,7 +304,7 @@ func (a *AppState) Startup() error {
 
 	// 3. 初始化 Logger（需要在 LogsPanel 创建后）
 	if err := a.InitLogger(); err != nil {
-		return fmt.Errorf("初始化日志失败: %w", err)
+		return fmt.Errorf("应用状态: 初始化日志失败: %w", err)
 	}
 
 	// 4. 设置窗口内容
@@ -319,6 +319,64 @@ func (a *AppState) Startup() error {
 	// 6. 设置窗口关闭事件
 	a.SetupWindowCloseHandler()
 
+	// 7. 系统启动时自动加载代理配置
+	if err := a.autoLoadProxyConfig(); err != nil {
+		a.AppendLog("INFO", "app", "自动加载代理配置失败: " + err.Error())
+	}
+
+	return nil
+}
+
+// autoLoadProxyConfig 系统启动时自动加载代理配置
+// 检查是否有保存的代理状态，如果有则尝试启动代理服务
+func (a *AppState) autoLoadProxyConfig() error {
+	if a.Store == nil || a.Store.AppConfig == nil {
+		return fmt.Errorf("应用状态: Store 未初始化")
+	}
+
+	// 检查是否需要自动启动代理
+	autoStart, err := a.Store.AppConfig.GetWithDefault("autoStartProxy", "false")
+	if err != nil || autoStart != "true" {
+		return nil // 不需要自动启动
+	}
+
+	// 获取保存的选中服务器 ID
+	selectedServerID, err := a.Store.AppConfig.GetWithDefault("selectedServerID", "")
+	if err != nil || selectedServerID == "" {
+		return fmt.Errorf("应用状态: 未找到保存的选中服务器")
+	}
+
+	// 选中保存的服务器
+	if err := a.Store.Nodes.Select(selectedServerID); err != nil {
+		return fmt.Errorf("应用状态: 选中服务器失败: %w", err)
+	}
+
+	// 启动代理
+	a.AppendLog("INFO", "app", "正在自动启动代理服务...")
+
+	// 使用 XrayControlService 启动代理
+	if a.XrayControlService == nil {
+		return fmt.Errorf("应用状态: XrayControlService 未初始化")
+	}
+
+	// 启动代理
+	result := a.XrayControlService.StartProxy(a.XrayInstance, "")
+	if result.Error != nil {
+		return fmt.Errorf("应用状态: 启动代理失败: %w", result.Error)
+	}
+
+	// 更新 XrayInstance 引用
+	a.XrayInstance = result.XrayInstance
+
+	// 更新 ProxyService 的 XrayInstance 引用
+	if a.ProxyService != nil {
+		a.ProxyService.UpdateXrayInstance(a.XrayInstance)
+	}
+
+	// 更新状态绑定
+	a.updateStatusBindings()
+
+	a.AppendLog("INFO", "app", "代理服务自动启动成功")
 	return nil
 }
 

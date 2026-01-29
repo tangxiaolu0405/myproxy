@@ -9,6 +9,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/data/binding"
 	"myproxy.com/p/internal/database"
+	"myproxy.com/p/internal/model"
 	"myproxy.com/p/internal/subscription"
 )
 
@@ -35,6 +36,7 @@ type Store struct {
 // 注意：不会自动加载数据，需要在 Fyne 应用初始化后调用 LoadAll()。
 // 参数：
 //   - subscriptionManager: 订阅管理器，用于订阅更新操作（可为 nil，但订阅更新功能将不可用）
+//
 // 返回：初始化后的 Store 实例
 func NewStore(subscriptionManager *subscription.SubscriptionManager) *Store {
 	s := &Store{
@@ -61,7 +63,7 @@ func (s *Store) LoadAll() {
 // NodesStore 管理节点（服务器）数据，包括列表绑定和所有数据库操作。
 type NodesStore struct {
 	// 节点列表（内存缓存）
-	nodes []*database.Node
+	nodes []*model.Node
 
 	// 双向绑定：节点列表绑定，UI 可以通过此绑定自动更新
 	NodesBinding binding.UntypedList
@@ -73,7 +75,7 @@ type NodesStore struct {
 // NewNodesStore 创建新的 NodesStore 实例。
 func NewNodesStore() *NodesStore {
 	return &NodesStore{
-		nodes:        make([]*database.Node, 0),
+		nodes:        make([]*model.Node, 0),
 		NodesBinding: binding.NewUntypedList(),
 	}
 }
@@ -82,13 +84,13 @@ func NewNodesStore() *NodesStore {
 func (ns *NodesStore) Load() error {
 	nodes, err := database.GetAllServers()
 	if err != nil {
-		ns.nodes = []*database.Node{}
+		ns.nodes = []*model.Node{}
 		ns.updateBinding()
-		return fmt.Errorf("加载节点列表失败: %w", err)
+		return fmt.Errorf("节点存储: 加载节点列表失败: %w", err)
 	}
 
 	// 转换为指针切片
-	ns.nodes = make([]*database.Node, len(nodes))
+	ns.nodes = make([]*model.Node, len(nodes))
 	for i := range nodes {
 		ns.nodes[i] = &nodes[i]
 	}
@@ -107,22 +109,22 @@ func (ns *NodesStore) updateBinding() {
 }
 
 // GetAll 返回所有节点列表（只读）。
-func (ns *NodesStore) GetAll() []*database.Node {
+func (ns *NodesStore) GetAll() []*model.Node {
 	return ns.nodes
 }
 
 // Get 根据 ID 获取节点。
-func (ns *NodesStore) Get(id string) (*database.Node, error) {
+func (ns *NodesStore) Get(id string) (*model.Node, error) {
 	for _, node := range ns.nodes {
 		if node.ID == id {
 			return node, nil
 		}
 	}
-	return nil, fmt.Errorf("节点不存在: %s", id)
+	return nil, fmt.Errorf("节点存储: 节点不存在: %s", id)
 }
 
 // GetSelected 返回当前选中的节点。
-func (ns *NodesStore) GetSelected() *database.Node {
+func (ns *NodesStore) GetSelected() *model.Node {
 	if ns.selectedServerID == "" {
 		return nil
 	}
@@ -139,12 +141,12 @@ func (ns *NodesStore) GetSelectedID() string {
 func (ns *NodesStore) Select(id string) error {
 	// 先更新数据库
 	if err := database.SelectServer(id); err != nil {
-		return fmt.Errorf("选中节点失败: %w", err)
+		return fmt.Errorf("节点存储: 选中节点失败: %w", err)
 	}
 
 	// 更新本地选中状态
 	ns.selectedServerID = id
-	
+
 	// 重新加载以更新选中状态（会更新所有节点的Selected字段）
 	return ns.Load()
 }
@@ -152,7 +154,7 @@ func (ns *NodesStore) Select(id string) error {
 // UpdateDelay 更新节点的延迟值。
 func (ns *NodesStore) UpdateDelay(id string, delay int) error {
 	if err := database.UpdateServerDelay(id, delay); err != nil {
-		return fmt.Errorf("更新节点延迟失败: %w", err)
+		return fmt.Errorf("节点存储: 更新节点延迟失败: %w", err)
 	}
 	return ns.Load() // 重新加载以更新延迟值
 }
@@ -160,9 +162,41 @@ func (ns *NodesStore) UpdateDelay(id string, delay int) error {
 // Delete 删除节点。
 func (ns *NodesStore) Delete(id string) error {
 	if err := database.DeleteServer(id); err != nil {
-		return fmt.Errorf("删除节点失败: %w", err)
+		return fmt.Errorf("节点存储: 删除节点失败: %w", err)
 	}
 	return ns.Load() // 重新加载
+}
+
+// Add 添加节点。
+func (ns *NodesStore) Add(node *model.Node) error {
+	if err := database.AddOrUpdateServer(*node, nil); err != nil {
+		return fmt.Errorf("节点存储: 添加节点失败: %w", err)
+	}
+	return ns.Load() // 重新加载
+}
+
+// Update 更新节点。
+func (ns *NodesStore) Update(node *model.Node) error {
+	if err := database.AddOrUpdateServer(*node, nil); err != nil {
+		return fmt.Errorf("节点存储: 更新节点失败: %w", err)
+	}
+	return ns.Load() // 重新加载
+}
+
+// GetBySubscriptionID 根据订阅ID获取节点列表。
+func (ns *NodesStore) GetBySubscriptionID(subscriptionID int64) ([]*model.Node, error) {
+	nodes, err := database.GetServersBySubscriptionID(subscriptionID)
+	if err != nil {
+		return nil, fmt.Errorf("节点存储: 获取订阅节点失败: %w", err)
+	}
+
+	// 转换为指针切片
+	result := make([]*model.Node, len(nodes))
+	for i := range nodes {
+		result[i] = &nodes[i]
+	}
+
+	return result, nil
 }
 
 // SubscriptionsStore 管理订阅数据，包括列表绑定和所有数据库操作。
@@ -191,7 +225,7 @@ func NewSubscriptionsStore(subscriptionManager *subscription.SubscriptionManager
 		subscriptions:        make([]*database.Subscription, 0),
 		SubscriptionsBinding: binding.NewUntypedList(),
 		LabelsBinding:        binding.NewStringList(),
-		subscriptionManager: subscriptionManager,
+		subscriptionManager:  subscriptionManager,
 		parentStore:          nil, // 将在 Store 创建后设置
 	}
 }
@@ -212,7 +246,7 @@ func (ss *SubscriptionsStore) Load() error {
 	if err != nil {
 		ss.subscriptions = []*database.Subscription{}
 		ss.updateBinding()
-		return fmt.Errorf("加载订阅列表失败: %w", err)
+		return fmt.Errorf("订阅存储: 加载订阅列表失败: %w", err)
 	}
 
 	ss.subscriptions = subscriptions
@@ -259,7 +293,7 @@ func (ss *SubscriptionsStore) Get(id int64) (*database.Subscription, error) {
 			return sub, nil
 		}
 	}
-	return nil, fmt.Errorf("订阅不存在: %d", id)
+	return nil, fmt.Errorf("订阅存储: 订阅不存在: %d", id)
 }
 
 // GetByURL 根据 URL 获取订阅。
@@ -269,14 +303,14 @@ func (ss *SubscriptionsStore) GetByURL(url string) (*database.Subscription, erro
 			return sub, nil
 		}
 	}
-	return nil, fmt.Errorf("订阅不存在: %s", url)
+	return nil, fmt.Errorf("订阅存储: 订阅不存在: %s", url)
 }
 
 // Add 添加新订阅。
 func (ss *SubscriptionsStore) Add(url, label string) (*database.Subscription, error) {
 	sub, err := database.AddOrUpdateSubscription(url, label)
 	if err != nil {
-		return nil, fmt.Errorf("添加订阅失败: %w", err)
+		return nil, fmt.Errorf("订阅存储: 添加订阅失败: %w", err)
 	}
 	return sub, ss.Load() // 重新加载
 }
@@ -284,7 +318,7 @@ func (ss *SubscriptionsStore) Add(url, label string) (*database.Subscription, er
 // Update 更新订阅。
 func (ss *SubscriptionsStore) Update(id int64, url, label string) error {
 	if err := database.UpdateSubscriptionByID(id, url, label); err != nil {
-		return fmt.Errorf("更新订阅失败: %w", err)
+		return fmt.Errorf("订阅存储: 更新订阅失败: %w", err)
 	}
 	return ss.Load() // 重新加载
 }
@@ -292,7 +326,7 @@ func (ss *SubscriptionsStore) Update(id int64, url, label string) error {
 // Delete 删除订阅。
 func (ss *SubscriptionsStore) Delete(id int64) error {
 	if err := database.DeleteSubscription(id); err != nil {
-		return fmt.Errorf("删除订阅失败: %w", err)
+		return fmt.Errorf("订阅存储: 删除订阅失败: %w", err)
 	}
 	return ss.Load() // 重新加载
 }
@@ -307,29 +341,30 @@ func (ss *SubscriptionsStore) GetServerCount(id int64) (int, error) {
 // 保留此方法仅用于向后兼容，建议使用 SubscriptionService.UpdateByID。
 // 参数：
 //   - id: 订阅 ID
+//
 // 返回：错误（如果有）
 func (ss *SubscriptionsStore) UpdateByID(id int64) error {
 	if ss.subscriptionManager == nil {
-		return fmt.Errorf("订阅管理器未初始化，无法更新订阅")
+		return fmt.Errorf("订阅存储: 订阅管理器未初始化，无法更新订阅")
 	}
-	
+
 	// 调用 SubscriptionManager 更新订阅（会更新数据库中的订阅和节点）
 	if err := ss.subscriptionManager.UpdateSubscriptionByID(id); err != nil {
-		return fmt.Errorf("更新订阅失败: %w", err)
+		return fmt.Errorf("订阅存储: 更新订阅失败: %w", err)
 	}
-	
+
 	// 更新后重新加载订阅数据
 	if err := ss.Load(); err != nil {
-		return fmt.Errorf("刷新订阅数据失败: %w", err)
+		return fmt.Errorf("订阅存储: 刷新订阅数据失败: %w", err)
 	}
-	
+
 	// 同时刷新节点数据（因为订阅更新会添加/更新节点）
 	if ss.parentStore != nil && ss.parentStore.Nodes != nil {
 		if err := ss.parentStore.Nodes.Load(); err != nil {
-			return fmt.Errorf("刷新节点数据失败: %w", err)
+			return fmt.Errorf("订阅存储: 刷新节点数据失败: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -339,30 +374,31 @@ func (ss *SubscriptionsStore) UpdateByID(id int64) error {
 // 参数：
 //   - url: 订阅 URL
 //   - label: 订阅标签（可选）
+//
 // 返回：错误（如果有）
 func (ss *SubscriptionsStore) Fetch(url string, label ...string) error {
 	if ss.subscriptionManager == nil {
-		return fmt.Errorf("订阅管理器未初始化，无法获取订阅")
+		return fmt.Errorf("订阅存储: 订阅管理器未初始化，无法获取订阅")
 	}
-	
+
 	// 调用 SubscriptionManager 获取订阅（会更新数据库中的订阅和节点）
 	_, err := ss.subscriptionManager.FetchSubscription(url, label...)
 	if err != nil {
-		return fmt.Errorf("获取订阅失败: %w", err)
+		return fmt.Errorf("订阅存储: 获取订阅失败: %w", err)
 	}
-	
+
 	// 获取后重新加载订阅数据
 	if err := ss.Load(); err != nil {
-		return fmt.Errorf("刷新订阅数据失败: %w", err)
+		return fmt.Errorf("订阅存储: 刷新订阅数据失败: %w", err)
 	}
-	
+
 	// 同时刷新节点数据（因为订阅获取会添加节点）
 	if ss.parentStore != nil && ss.parentStore.Nodes != nil {
 		if err := ss.parentStore.Nodes.Load(); err != nil {
-			return fmt.Errorf("刷新节点数据失败: %w", err)
+			return fmt.Errorf("订阅存储: 刷新节点数据失败: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -448,11 +484,11 @@ func (ls *LayoutStore) Save(config *LayoutConfig) error {
 func (ls *LayoutStore) save() error {
 	configJSON, err := json.Marshal(ls.config)
 	if err != nil {
-		return fmt.Errorf("序列化布局配置失败: %w", err)
+		return fmt.Errorf("布局存储: 序列化布局配置失败: %w", err)
 	}
 
 	if err := database.SetLayoutConfig("layout_config", string(configJSON)); err != nil {
-		return fmt.Errorf("保存布局配置失败: %w", err)
+		return fmt.Errorf("布局存储: 保存布局配置失败: %w", err)
 	}
 
 	ls.updateBinding()
@@ -513,7 +549,7 @@ func (acs *AppConfigStore) SaveWindowSize(size fyne.Size) error {
 	acs.windowSize = size
 	sizeStr := fmt.Sprintf("%.0f,%.0f", float64(size.Width), float64(size.Height))
 	if err := database.SetAppConfig("windowSize", sizeStr); err != nil {
-		return fmt.Errorf("保存窗口大小失败: %w", err)
+		return fmt.Errorf("应用配置存储: 保存窗口大小失败: %w", err)
 	}
 	return nil
 }
@@ -531,7 +567,7 @@ func (acs *AppConfigStore) GetWithDefault(key, defaultValue string) (string, err
 // Set 设置配置值。
 func (acs *AppConfigStore) Set(key, value string) error {
 	if err := database.SetAppConfig(key, value); err != nil {
-		return fmt.Errorf("保存配置失败: %w", err)
+		return fmt.Errorf("应用配置存储: 保存配置失败: %w", err)
 	}
 	acs.config[key] = value
 	return nil
@@ -609,7 +645,7 @@ func (ps *ProxyStatusStore) UpdateProxyStatus(xrayInstance interface {
 						proxyPort = 0
 					}
 				}()
-				
+
 				// 安全地调用方法
 				if xrayInstance.IsRunning() {
 					isRunning = true
@@ -650,4 +686,3 @@ func (ps *ProxyStatusStore) UpdateProxyStatus(xrayInstance interface {
 		ps.ServerNameBinding.Set("无")
 	}
 }
-

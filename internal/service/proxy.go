@@ -68,7 +68,7 @@ func (ps *ProxyService) ApplySystemProxyMode(mode string) *ApplySystemProxyModeR
 			logMessage = "已清除系统代理设置和环境变量代理"
 		} else if err != nil && terminalErr != nil {
 			logMessage = fmt.Sprintf("清除系统代理失败: %v; 清除环境变量代理失败: %v", err, terminalErr)
-			err = fmt.Errorf("清除失败: %v; %v", err, terminalErr)
+			err = fmt.Errorf("代理服务: 清除失败: %v; %v", err, terminalErr)
 		} else if err != nil {
 			logMessage = fmt.Sprintf("清除系统代理失败: %v; 已清除环境变量代理", err)
 		} else {
@@ -111,7 +111,7 @@ func (ps *ProxyService) ApplySystemProxyMode(mode string) *ApplySystemProxyModeR
 	default:
 		return &ApplySystemProxyModeResult{
 			LogMessage: fmt.Sprintf("未知的系统代理模式: %s", mode),
-			Error:      fmt.Errorf("未知的系统代理模式: %s", mode),
+			Error:      fmt.Errorf("代理服务: 未知的系统代理模式: %s", mode),
 		}
 	}
 

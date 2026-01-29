@@ -20,10 +20,10 @@ import (
 // NodePage 管理服务器列表的显示和操作。
 // 它支持服务器选择、延迟测试、代理启动/停止等功能，并提供右键菜单操作。
 type NodePage struct {
-	appState       *AppState
-	list           *widget.List        // 列表组件
-	scrollList     *container.Scroll   // 滚动容器
-	content        fyne.CanvasObject   // 内容容器
+	appState   *AppState
+	list       *widget.List      // 列表组件
+	scrollList *container.Scroll // 滚动容器
+	content    fyne.CanvasObject // 内容容器
 
 	// 搜索与过滤相关
 	searchEntry *widget.Entry // 节点搜索输入框
@@ -38,7 +38,7 @@ func NewNodePage(appState *AppState) *NodePage {
 	np := &NodePage{
 		appState: appState,
 	}
-	
+
 	// 监听 Store 的节点绑定数据变化，自动刷新列表
 	if appState != nil && appState.Store != nil && appState.Store.Nodes != nil {
 		appState.Store.Nodes.NodesBinding.AddListener(binding.NewDataListener(func() {
@@ -49,10 +49,9 @@ func NewNodePage(appState *AppState) *NodePage {
 			}
 		}))
 	}
-	
+
 	return np
 }
-
 
 // loadNodes 从 Store 加载节点（Store 已经维护了绑定，这里只是确保数据最新）
 func (np *NodePage) loadNodes() {
@@ -60,7 +59,6 @@ func (np *NodePage) loadNodes() {
 		_ = np.appState.Store.Nodes.Load()
 	}
 }
-
 
 // // SetOnServerSelect 设置服务器选中时的回调函数。
 // // 参数：
@@ -85,8 +83,8 @@ func (np *NodePage) Build() fyne.CanvasObject {
 	np.selectedServerLabel.Alignment = fyne.TextAlignLeading
 	np.selectedServerLabel.TextStyle = fyne.TextStyle{Bold: true}
 	np.selectedServerLabel.Truncation = fyne.TextTruncateEllipsis // 文本过长时显示省略号
-	np.selectedServerLabel.Wrapping = fyne.TextTruncate // 不换行，截断
-	np.updateSelectedServerLabel() // 初始化标签内容
+	np.selectedServerLabel.Wrapping = fyne.TextTruncate           // 不换行，截断
+	np.updateSelectedServerLabel()                                // 初始化标签内容
 
 	// 3. 操作按钮组（参考 subscriptionpage 风格）
 	testAllBtn := widget.NewButtonWithIcon("测速", theme.ViewRefreshIcon(), np.onTestAll)
@@ -105,8 +103,8 @@ func (np *NodePage) Build() fyne.CanvasObject {
 	rightButtons := container.NewHBox(testAllBtn, subscriptionBtn)
 	headerBar := container.NewBorder(
 		nil, nil, // 上下为空
-		backBtn,  // 左侧：返回按钮
-		rightButtons, // 右侧：操作按钮组
+		backBtn,        // 左侧：返回按钮
+		rightButtons,   // 右侧：操作按钮组
 		labelContainer, // 中间：选中服务器标签（自动占满剩余空间）
 	)
 
@@ -186,7 +184,7 @@ func (np *NodePage) Build() fyne.CanvasObject {
 	np.content = container.NewBorder(
 		container.NewVBox(
 			headerStack,
-			searchBar, // 移除 padding
+			searchBar,   // 移除 padding
 			tableHeader, // 表头直接放置，不添加额外 padding
 			canvas.NewLine(theme.Color(theme.ColorNameSeparator)),
 		),
@@ -196,7 +194,6 @@ func (np *NodePage) Build() fyne.CanvasObject {
 
 	return np.content
 }
-
 
 // Refresh 刷新节点列表的显示，使 UI 反映最新的节点数据。
 func (np *NodePage) Refresh() {
@@ -239,7 +236,7 @@ func (np *NodePage) updateSelectedServerLabel() {
 	}
 
 	// 从 Store 获取选中的服务器
-	var selectedNode *database.Node
+	var selectedNode *model.Node
 	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
 		selectedNode = np.appState.Store.Nodes.GetSelected()
 	}
@@ -262,13 +259,13 @@ func (np *NodePage) getNodeCount() int {
 
 // getFilteredNodes 根据当前搜索关键字返回过滤后的节点列表。
 // 支持按名称、地址、协议类型进行不区分大小写的匹配。
-func (np *NodePage) getFilteredNodes() []*database.Node {
+func (np *NodePage) getFilteredNodes() []*model.Node {
 	// 从 Store 获取所有节点
-	var allNodes []*database.Node
+	var allNodes []*model.Node
 	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
 		allNodes = np.appState.Store.Nodes.GetAll()
 	} else {
-		allNodes = []*database.Node{}
+		allNodes = []*model.Node{}
 	}
 
 	// 如果没有搜索关键字，直接返回完整列表
@@ -276,7 +273,7 @@ func (np *NodePage) getFilteredNodes() []*database.Node {
 		return allNodes
 	}
 
-	filtered := make([]*database.Node, 0, len(allNodes))
+	filtered := make([]*model.Node, 0, len(allNodes))
 	for _, node := range allNodes {
 		name := strings.ToLower(node.Name)
 		addr := strings.ToLower(node.Addr)
@@ -315,7 +312,7 @@ func (np *NodePage) updateNodeItem(id widget.ListItemID, obj fyne.CanvasObject) 
 	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
 		selectedID = np.appState.Store.Nodes.GetSelectedID()
 	}
-	item.isConnected = (np.appState != nil && np.appState.XrayInstance != nil && 
+	item.isConnected = (np.appState != nil && np.appState.XrayInstance != nil &&
 		np.appState.XrayInstance.IsRunning() && selectedID == node.ID)
 
 	// 使用新的Update方法更新多列信息
@@ -348,10 +345,10 @@ func (np *NodePage) onNodeSelected(id widget.ListItemID) {
 	if np.list != nil {
 		np.list.Refresh()
 	}
-	
+
 	// 滚动到选中位置
 	np.scrollToSelected()
-	
+
 	// 更新主界面的节点信息显示（使用双向绑定，只需更新绑定数据，UI 会自动更新）
 	if np.appState != nil {
 		// 更新绑定数据（serverNameLabel 会自动更新，因为使用了双向绑定）
@@ -579,7 +576,7 @@ func (np *NodePage) StartProxyForSelected() {
 
 	// 调用 service 启动代理
 	result := np.appState.XrayControlService.StartProxy(np.appState.XrayInstance, unifiedLogPath)
-	
+
 	if result.Error != nil {
 		np.logAndShowError("启动代理失败", result.Error)
 		np.appState.UpdateProxyStatus()
@@ -855,19 +852,19 @@ func (s *ServerListItem) TappedSecondary(pe *fyne.PointEvent) {
 }
 
 // Update  更新服务器列表项的信息
-func (s *ServerListItem) Update(server database.Node) {
+func (s *ServerListItem) Update(server model.Node) {
 	fyne.Do(func() {
 		// 更新选中状态
 		s.isSelected = server.Selected
-		
+
 		// 检查是否为当前连接的节点
 		if s.panel != nil && s.panel.appState != nil {
 			selectedID := ""
 			if s.panel.appState.Store != nil && s.panel.appState.Store.Nodes != nil {
 				selectedID = s.panel.appState.Store.Nodes.GetSelectedID()
 			}
-			s.isConnected = (s.panel.appState.XrayInstance != nil && 
-				s.panel.appState.XrayInstance.IsRunning() && 
+			s.isConnected = (s.panel.appState.XrayInstance != nil &&
+				s.panel.appState.XrayInstance.IsRunning() &&
 				selectedID == server.ID)
 		}
 
@@ -977,7 +974,7 @@ func (s *ServerListItem) Update(server database.Node) {
 }
 
 // showQuickMenu 显示快速操作菜单 - 注释功能
-func (s *ServerListItem) showQuickMenu(server database.Node) {
+func (s *ServerListItem) showQuickMenu(server model.Node) {
 	if s.panel == nil || s.panel.appState == nil || s.panel.appState.Window == nil {
 		return
 	}
@@ -1002,7 +999,7 @@ func (s *ServerListItem) showQuickMenu(server database.Node) {
 		}),
 		fyne.NewMenuItem("复制信息", func() {
 			// TODO: 实现复制节点信息功能
-			info := fmt.Sprintf("名称: %s\n地址: %s:%d\n协议: %s", 
+			info := fmt.Sprintf("名称: %s\n地址: %s:%d\n协议: %s",
 				server.Name, server.Addr, server.Port, server.ProtocolType)
 			if s.panel != nil && s.panel.appState != nil && s.panel.appState.Window != nil {
 				s.panel.appState.Window.Clipboard().SetContent(info)
