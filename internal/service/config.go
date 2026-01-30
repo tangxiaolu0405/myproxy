@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"myproxy.com/p/internal/store"
@@ -155,3 +156,106 @@ func (cs *ConfigService) Set(key, value string) error {
 	return cs.store.AppConfig.Set(key, value)
 }
 
+// GetDirectRoutes 获取直连路由列表（域名或 IP/CIDR，每行一条，对应 xray 规则）。
+// 返回：直连地址列表，空切片表示未配置
+func (cs *ConfigService) GetDirectRoutes() []string {
+	if cs.store == nil || cs.store.AppConfig == nil {
+		return nil
+	}
+	raw, err := cs.store.AppConfig.GetWithDefault("directRoutes", "")
+	if err != nil || raw == "" {
+		return nil
+	}
+	return parseDirectRoutes(raw)
+}
+
+// GetDirectRoutesRaw 获取直连路由原始字符串（换行分隔），供 UI 多行输入框使用。
+func (cs *ConfigService) GetDirectRoutesRaw() string {
+	routes := cs.GetDirectRoutes()
+	if len(routes) == 0 {
+		return ""
+	}
+	return formatDirectRoutes(routes)
+}
+
+// SetDirectRoutesFromRaw 从 UI 多行字符串保存直连路由（会解析并规范化后存储）。
+func (cs *ConfigService) SetDirectRoutesFromRaw(raw string) error {
+	routes := parseDirectRoutes(raw)
+	return cs.SetDirectRoutes(routes)
+}
+
+// SetDirectRoutes 保存直连路由列表。
+// 参数：直连地址列表，会序列化为换行分隔的字符串存储
+func (cs *ConfigService) SetDirectRoutes(routes []string) error {
+	if cs.store == nil || cs.store.AppConfig == nil {
+		return fmt.Errorf("Store 未初始化")
+	}
+	raw := formatDirectRoutes(routes)
+	return cs.store.AppConfig.Set("directRoutes", raw)
+}
+
+// GetDirectRoutesUseProxy 获取「直连列表中的地址是否走代理」。
+// true：直连列表中的地址走代理；false：走直连。
+func (cs *ConfigService) GetDirectRoutesUseProxy() bool {
+	if cs.store == nil || cs.store.AppConfig == nil {
+		return false
+	}
+	v, _ := cs.store.AppConfig.GetWithDefault("directRoutesUseProxy", "false")
+	return v == "true"
+}
+
+// SetDirectRoutesUseProxy 设置「直连列表中的地址是否走代理」。
+func (cs *ConfigService) SetDirectRoutesUseProxy(useProxy bool) error {
+	if cs.store == nil || cs.store.AppConfig == nil {
+		return fmt.Errorf("Store 未初始化")
+	}
+	val := "false"
+	if useProxy {
+		val = "true"
+	}
+	return cs.store.AppConfig.Set("directRoutesUseProxy", val)
+}
+
+// parseDirectRoutes 从换行分隔的字符串解析直连路由列表。
+// 支持 domain:xxx、ip 或 cidr，纯域名会补全为 domain:xxx。
+func parseDirectRoutes(raw string) []string {
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
+		}
+		// 已是 domain: 或 geosite: 等前缀则保持
+		if strings.HasPrefix(s, "domain:") || strings.HasPrefix(s, "geosite:") ||
+			strings.HasPrefix(s, "regexp:") || strings.HasPrefix(s, "full:") {
+			out = append(out, s)
+			continue
+		}
+		// 简单启发式：含有点且非纯数字，视为域名
+		if strings.Contains(s, ".") && !isLikelyIPOrCIDR(s) {
+			out = append(out, "domain:"+s)
+		} else {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func isLikelyIPOrCIDR(s string) bool {
+	// 含 / 视为 CIDR；否则简单检查是否像 IP
+	if strings.Contains(s, "/") {
+		return true
+	}
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// formatDirectRoutes 将直连路由列表格式化为换行分隔的字符串。
+func formatDirectRoutes(routes []string) string {
+	return strings.TrimSpace(strings.Join(routes, "\n"))
+}

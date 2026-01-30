@@ -473,12 +473,19 @@ func buildSSStreamSettings(server *model.Node) map[string]interface{} {
 	return streamSettings
 }
 
-// CreateXrayConfig 创建完整的 xray 配置
-// localPort: 本地 SOCKS5 监听端口（默认 10080）
-// server: 服务器配置，用于创建出站配置
-// logFilePath: 日志文件路径（可选，如果为空则不设置日志文件）
-// whiteList: 白名单规则，指定哪些流量不走代理
-func CreateXrayConfig(localPort int, server *model.Node, logFilePath ...string) ([]byte, error) {
+// RoutingOptions 路由相关配置（直连列表、直连列表是否走代理等）。
+type RoutingOptions struct {
+	DirectRoutes        []string // 用户配置的直连列表（domain:xxx 或 ip/cidr）
+	DirectRoutesUseProxy bool    // true：直连列表走代理；false：走直连
+}
+
+// CreateXrayConfig 创建完整的 xray 配置。
+// 参数：
+//   - localPort: 本地 SOCKS5 监听端口（默认 10080）
+//   - server: 服务器配置，用于创建出站配置
+//   - logFilePath: 日志文件路径（可选，为空则不设置）
+//   - routing: 路由选项（可选，nil 则仅使用内置规则）
+func CreateXrayConfig(localPort int, server *model.Node, logFilePath string, routing *RoutingOptions) ([]byte, error) {
 	if localPort == 0 {
 		localPort = 10080
 	}
@@ -508,24 +515,16 @@ func CreateXrayConfig(localPort int, server *model.Node, logFilePath ...string) 
 	}
 
 	// 构建日志配置
-	// 使用 warning 级别，只输出警告和错误，减少无意义的调试日志
-	// 常见的无意义日志包括：
-	// - [Debug] proxy/socks: Not Socks request, try to parse as HTTP request
-	// - [Info] proxy/http: request to Method [CONNECT]
-	// - [Info] app/dispatcher: default route
-	// - [Info] transport/internet/tcp: dialing TCP
 	logConfig := map[string]interface{}{
-		"loglevel": "warning", // 只输出警告和错误，过滤掉频繁的调试信息
+		"loglevel": "warning",
+	}
+	if logFilePath != "" {
+		logConfig["error"] = logFilePath
+		logConfig["access"] = logFilePath
 	}
 
-	// 如果提供了日志文件路径，设置日志输出到文件
-	if len(logFilePath) > 0 && logFilePath[0] != "" {
-		logConfig["error"] = logFilePath[0]
-		logConfig["access"] = logFilePath[0] // 访问日志也输出到同一文件
-	}
-
-	// 构建路由规则
-	rules := buildRoutingRules()
+	// 构建路由规则（含用户直连列表与是否走代理）
+	rules := buildRoutingRules(routing)
 
 	// 构建完整配置
 	config := map[string]interface{}{
@@ -546,12 +545,12 @@ func CreateXrayConfig(localPort int, server *model.Node, logFilePath ...string) 
 	return json.MarshalIndent(config, "", "  ")
 }
 
-// buildRoutingRules 构建路由规则
-// 添加常见的白名单规则，指定哪些流量不走代理
-func buildRoutingRules() []interface{} {
+// buildRoutingRules 构建路由规则。
+// 顺序：本地直连 -> 用户直连列表（根据 directRoutesUseProxy 走直连或代理）-> 国内直连 -> 默认代理。
+func buildRoutingRules(routing *RoutingOptions) []interface{} {
 	rules := []interface{}{}
 
-	// 添加本地地址白名单
+	// 1. 本地地址直连
 	localRule := map[string]interface{}{
 		"type": "field",
 		"ip": []string{
@@ -566,7 +565,27 @@ func buildRoutingRules() []interface{} {
 	}
 	rules = append(rules, localRule)
 
-	// 添加常见的国内域名白名单
+	// 2. 用户直连列表：走直连或走代理（直连列表中的地址也可以走代理）
+	if routing != nil && len(routing.DirectRoutes) > 0 {
+		domains, ips := splitDirectRoutes(routing.DirectRoutes)
+		if len(domains) > 0 || len(ips) > 0 {
+			r := map[string]interface{}{"type": "field"}
+			if len(domains) > 0 {
+				r["domain"] = domains
+			}
+			if len(ips) > 0 {
+				r["ip"] = ips
+			}
+			if routing.DirectRoutesUseProxy {
+				r["outboundTag"] = "proxy"
+			} else {
+				r["outboundTag"] = "direct"
+			}
+			rules = append(rules, r)
+		}
+	}
+
+	// 3. 国内域名直连
 	chinaRule := map[string]interface{}{
 		"type": "field",
 		"domain": []string{
@@ -741,5 +760,28 @@ func buildRoutingRules() []interface{} {
 	}
 	rules = append(rules, chinaIPRule)
 
+	// 4. 默认走代理（匹配所有剩余流量）
+	rules = append(rules, map[string]interface{}{
+		"type":        "field",
+		"outboundTag": "proxy",
+	})
+
 	return rules
+}
+
+// splitDirectRoutes 将直连规则拆分为 domain 与 ip 列表（xray 规则格式）。
+func splitDirectRoutes(routes []string) (domains, ips []string) {
+	for _, r := range routes {
+		s := strings.TrimSpace(r)
+		if s == "" {
+			continue
+		}
+		if strings.HasPrefix(s, "domain:") || strings.HasPrefix(s, "geosite:") ||
+			strings.HasPrefix(s, "regexp:") || strings.HasPrefix(s, "full:") {
+			domains = append(domains, s)
+		} else {
+			ips = append(ips, s)
+		}
+	}
+	return domains, ips
 }

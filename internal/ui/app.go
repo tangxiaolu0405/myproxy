@@ -89,7 +89,7 @@ func NewAppState() *AppState {
 		// 初始化 ProxyService
 		ProxyService: service.NewProxyService(nil),
 		// XrayControlService 使用临时日志回调，Logger 创建后会更新
-		XrayControlService: service.NewXrayControlService(dataStore, logCallback),
+		XrayControlService: service.NewXrayControlService(dataStore, configService, logCallback),
 	}
 
 	return appState
@@ -203,7 +203,7 @@ func (a *AppState) InitLogger() error {
 		}
 		// 注意：XrayControlService 目前不支持更新回调，需要在创建时就传入
 		// 这里我们重新创建 service 实例（Logger 创建后只初始化一次）
-		a.XrayControlService = service.NewXrayControlService(a.Store, realLogCallback)
+		a.XrayControlService = service.NewXrayControlService(a.Store, a.ConfigService, realLogCallback)
 	}
 
 	// Logger 初始化后，启动日志文件监控（用于监控 xray 日志等直接从文件写入的日志）
@@ -359,8 +359,12 @@ func (a *AppState) autoLoadProxyConfig() error {
 		return fmt.Errorf("应用状态: XrayControlService 未初始化")
 	}
 
-	// 启动代理
-	result := a.XrayControlService.StartProxy(a.XrayInstance, "")
+	// 启动代理（使用统一日志路径）
+	unifiedLogPath := ""
+	if a.Logger != nil {
+		unifiedLogPath = a.Logger.GetLogFilePath()
+	}
+	result := a.XrayControlService.StartProxy(a.XrayInstance, unifiedLogPath)
 	if result.Error != nil {
 		return fmt.Errorf("应用状态: 启动代理失败: %w", result.Error)
 	}

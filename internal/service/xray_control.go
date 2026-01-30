@@ -9,18 +9,21 @@ import (
 
 // XrayControlService 代理控制服务层，提供 xray 代理启动和停止的业务逻辑。
 type XrayControlService struct {
-	store      *store.Store
-	logCallback func(level, message string) // 日志回调函数
+	store        *store.Store
+	config       *ConfigService
+	logCallback  func(level, message string)
 }
 
 // NewXrayControlService 创建新的代理控制服务实例。
 // 参数：
 //   - store: Store 实例，用于数据访问
+//   - config: ConfigService，用于读取直连路由等配置
 //   - logCallback: 日志回调函数，用于记录日志
 // 返回：初始化后的 XrayControlService 实例
-func NewXrayControlService(store *store.Store, logCallback func(level, message string)) *XrayControlService {
+func NewXrayControlService(store *store.Store, config *ConfigService, logCallback func(level, message string)) *XrayControlService {
 	return &XrayControlService{
 		store:       store,
+		config:      config,
 		logCallback: logCallback,
 	}
 }
@@ -72,8 +75,21 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 		xcs.logCallback("INFO", fmt.Sprintf("开始启动xray-core代理: %s", selectedNode.Name))
 	}
 
-	// 创建xray配置，设置日志文件路径为统一日志文件
-	xrayConfigJSON, err := xray.CreateXrayConfig(proxyPort, selectedNode, logFilePath)
+	// 读取直连路由配置
+	var routing *xray.RoutingOptions
+	if xcs.config != nil {
+		routes := xcs.config.GetDirectRoutes()
+		useProxy := xcs.config.GetDirectRoutesUseProxy()
+		if len(routes) > 0 {
+			routing = &xray.RoutingOptions{
+				DirectRoutes:         routes,
+				DirectRoutesUseProxy: useProxy,
+			}
+		}
+	}
+
+	// 创建 xray 配置（含日志路径与路由选项）
+	xrayConfigJSON, err := xray.CreateXrayConfig(proxyPort, selectedNode, logFilePath, routing)
 	if err != nil {
 		logMsg := fmt.Sprintf("创建xray配置失败: %v", err)
 		if xcs.logCallback != nil {
