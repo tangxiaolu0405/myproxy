@@ -130,13 +130,8 @@ func (tc *TrafficChart) Stop() {
 
 // CreateRenderer 创建渲染器
 func (tc *TrafficChart) CreateRenderer() fyne.WidgetRenderer {
-	var bgColor color.Color
-	if tc.appState != nil && tc.appState.App != nil {
-		bgColor = CurrentThemeColor(tc.appState.App, theme.ColorNameBackground)
-	} else {
-		bgColor = color.NRGBA{R: 23, G: 23, B: 23, A: 255}
-	}
-	return &trafficChartRenderer{
+		bgColor := CurrentThemeColor(tc.appState.App, theme.ColorNameBackground)
+		return &trafficChartRenderer{
 		trafficChart:  tc,
 		uploadLines:   make([]*canvas.Line, 0),
 		downloadLines: make([]*canvas.Line, 0),
@@ -224,15 +219,9 @@ func (r *trafficChartRenderer) drawChart(width, height float32) {
 	r.uploadLines = r.uploadLines[:0]
 	r.downloadLines = r.downloadLines[:0]
 
-	var uploadColor, downloadColor color.Color
-	if r.trafficChart.appState != nil && r.trafficChart.appState.App != nil {
-		uploadColor = CurrentThemeColor(r.trafficChart.appState.App, theme.ColorNamePrimary)
-		downloadColor = CurrentThemeColor(r.trafficChart.appState.App, theme.ColorNameFocus)
-	} else {
-		uploadColor = color.NRGBA{R: 0, G: 150, B: 255, A: 255}
-		downloadColor = color.NRGBA{R: 0, G: 255, B: 100, A: 255}
-	}
-
+	uploadColor := CurrentThemeColor(r.trafficChart.appState.App, theme.ColorNamePrimary)
+	downloadColor := CurrentThemeColor(r.trafficChart.appState.App, theme.ColorNameFocus)
+	
 	// 绘制上传线（连接所有点）
 	for i := 0; i < len(dataPoints)-1; i++ {
 		x1 := float32(i) * pointSpacing

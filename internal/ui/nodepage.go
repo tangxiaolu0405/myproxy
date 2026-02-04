@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"image/color"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -110,12 +109,7 @@ func (np *NodePage) Build() fyne.CanvasObject {
 	)
 
 	// 4. 组合头部区域（添加分隔线，移除 padding 降低高度）
-	var separatorColor color.Color
-	if np.appState != nil && np.appState.App != nil {
-		separatorColor = CurrentThemeColor(np.appState.App, theme.ColorNameSeparator)
-	} else {
-		separatorColor = theme.Color(theme.ColorNameSeparator)
-	}
+	separatorColor := CurrentThemeColor(np.appState.App, theme.ColorNameSeparator)
 	headerStack := container.NewVBox(
 		headerBar, // 移除 padding 降低功能栏高度
 		canvas.NewLine(separatorColor),
@@ -816,14 +810,7 @@ func NewServerListItem(panel *NodePage, appState *AppState) *ServerListItem {
 
 // setupLayout 设置列表项布局（参考 SubscriptionCard 的设计）
 func (s *ServerListItem) setupLayout() fyne.CanvasObject {
-	// 创建背景（使用输入背景色，与列表项区分）
-	// 保存引用以便动态更新选中状态的颜色
-	var bgColor color.Color
-	if s.appState != nil && s.appState.App != nil {
-		bgColor = CurrentThemeColor(s.appState.App, theme.ColorNameInputBackground)
-	} else {
-		bgColor = theme.Color(theme.ColorNameInputBackground)
-	}
+	bgColor := CurrentThemeColor(s.appState.App, theme.ColorNameInputBackground)
 	s.bgRect = canvas.NewRectangle(bgColor)
 	s.bgRect.CornerRadius = 4 // 较小的圆角，适合列表项
 
@@ -888,33 +875,17 @@ func (s *ServerListItem) Update(server model.Node) {
 		if s.bgRect != nil {
 			if s.isConnected {
 				// 当前连接的节点：使用主题色（蓝色）
-				if s.appState != nil && s.appState.App != nil {
-					s.bgRect.FillColor = CurrentThemeColor(s.appState.App, theme.ColorNamePrimary)
-					s.bgRect.StrokeColor = CurrentThemeColor(s.appState.App, theme.ColorNamePrimary)
-				} else {
-					s.bgRect.FillColor = theme.PrimaryColor()
-					s.bgRect.StrokeColor = theme.PrimaryColor()
-				}
+				s.bgRect.FillColor = CurrentThemeColor(s.appState.App, theme.ColorNamePrimary)
+				s.bgRect.StrokeColor = CurrentThemeColor(s.appState.App, theme.ColorNamePrimary)
 				s.bgRect.StrokeWidth = 2
 			} else if s.isSelected {
-				// 选中的节点：使用浅蓝色背景
-				if s.appState != nil && s.appState.App != nil {
-					s.bgRect.FillColor = CurrentThemeColor(s.appState.App, theme.ColorNameSelection)
-					s.bgRect.StrokeColor = CurrentThemeColor(s.appState.App, theme.ColorNameSeparator)
-				} else {
-					s.bgRect.FillColor = theme.Color(theme.ColorNameSelection)
-					s.bgRect.StrokeColor = theme.Color(theme.ColorNameSeparator)
-				}
+				s.bgRect.FillColor = CurrentThemeColor(s.appState.App, theme.ColorNameSelection)
+				s.bgRect.StrokeColor = CurrentThemeColor(s.appState.App, theme.ColorNameSeparator)
 				s.bgRect.StrokeWidth = 1
 			} else {
 				// 未选中：使用默认背景色
-				if s.appState != nil && s.appState.App != nil {
-					s.bgRect.FillColor = CurrentThemeColor(s.appState.App, theme.ColorNameInputBackground)
-					s.bgRect.StrokeColor = CurrentThemeColor(s.appState.App, theme.ColorNameSeparator)
-				} else {
-					s.bgRect.FillColor = theme.Color(theme.ColorNameInputBackground)
-					s.bgRect.StrokeColor = theme.Color(theme.ColorNameSeparator)
-				}
+				s.bgRect.FillColor = CurrentThemeColor(s.appState.App, theme.ColorNameInputBackground)
+				s.bgRect.StrokeColor = CurrentThemeColor(s.appState.App, theme.ColorNameSeparator)
 				s.bgRect.StrokeWidth = 0
 			}
 			s.bgRect.Refresh()

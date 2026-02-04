@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"image/color"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -67,12 +66,7 @@ func (sp *SubscriptionPage) Build() fyne.CanvasObject {
 	)
 
 	// 组合头部区域
-	var separatorColor color.Color
-	if sp.appState != nil && sp.appState.App != nil {
-		separatorColor = CurrentThemeColor(sp.appState.App, theme.ColorNameSeparator)
-	} else {
-		separatorColor = theme.Color(theme.ColorNameSeparator)
-	}
+	separatorColor := CurrentThemeColor(sp.appState.App, theme.ColorNameSeparator)
 	headerStack := container.NewVBox(
 		container.NewPadded(headerBar),
 		canvas.NewLine(separatorColor),
@@ -241,12 +235,7 @@ func NewSubscriptionCard(page *SubscriptionPage, appState *AppState) *Subscripti
 
 	card.infoLabel = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{})
 
-	var primaryColor color.Color
-	if appState != nil && appState.App != nil {
-		primaryColor = CurrentThemeColor(appState.App, theme.ColorNamePrimary)
-	} else {
-		primaryColor = theme.Color(theme.ColorNamePrimary)
-	}
+	primaryColor := CurrentThemeColor(appState.App, theme.ColorNamePrimary)
 	card.statusBar = canvas.NewRectangle(primaryColor)
 	card.statusBar.SetMinSize(fyne.NewSize(4, 0))
 
@@ -266,12 +255,7 @@ func NewSubscriptionCard(page *SubscriptionPage, appState *AppState) *Subscripti
 }
 
 func (card *SubscriptionCard) setupLayout() fyne.CanvasObject {
-	var bgColor color.Color
-	if card.appState != nil && card.appState.App != nil {
-		bgColor = CurrentThemeColor(card.appState.App, theme.ColorNameInputBackground)
-	} else {
-		bgColor = theme.Color(theme.ColorNameInputBackground)
-	}
+	bgColor := CurrentThemeColor(card.appState.App, theme.ColorNameInputBackground)
 	card.bgRect = canvas.NewRectangle(bgColor)
 	card.bgRect.CornerRadius = 10
 	bg := card.bgRect
@@ -305,18 +289,10 @@ func (card *SubscriptionCard) setupLayout() fyne.CanvasObject {
 func (card *SubscriptionCard) Update(sub *database.Subscription) {
 	card.sub = sub
 	// 使用当前主题色，切换主题后列表刷新时会生效
-	if card.appState != nil && card.appState.App != nil {
-		card.statusBar.FillColor = CurrentThemeColor(card.appState.App, theme.ColorNamePrimary)
-	} else {
-		card.statusBar.FillColor = theme.Color(theme.ColorNamePrimary)
-	}
+	card.statusBar.FillColor = CurrentThemeColor(card.appState.App, theme.ColorNamePrimary)
 	card.statusBar.Refresh()
 	if card.bgRect != nil {
-		if card.appState != nil && card.appState.App != nil {
-			card.bgRect.FillColor = CurrentThemeColor(card.appState.App, theme.ColorNameInputBackground)
-		} else {
-			card.bgRect.FillColor = theme.Color(theme.ColorNameInputBackground)
-		}
+		card.bgRect.FillColor = CurrentThemeColor(card.appState.App, theme.ColorNameInputBackground)
 		card.bgRect.Refresh()
 	}
 	card.nameLabel.SetText(sub.Label)
