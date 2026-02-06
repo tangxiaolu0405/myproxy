@@ -482,7 +482,6 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		} else {
 			mw.mainToggleButton = NewCircularButton(theme.ConfirmIcon(), mw.onToggleProxy, buttonSize, mw.appState)
 		}
-		mw.mainToggleButton.SetImportance(widget.LowImportance)
 		mw.updateMainToggleButton()
 	}
 
@@ -957,10 +956,8 @@ func (mw *MainWindow) updateMainToggleButton() {
 	// 更新按钮图标：运行中使用 CancelIcon，未运行时使用 ConfirmIcon
 	if isRunning {
 		mw.mainToggleButton.SetIcon(theme.CancelIcon())
-		mw.mainToggleButton.SetImportance(widget.SuccessImportance)
 	} else {
 		mw.mainToggleButton.SetIcon(theme.ConfirmIcon())
-		mw.mainToggleButton.SetImportance(widget.LowImportance)
 	}
 
 	// 更新按钮尺寸（响应窗口大小变化）

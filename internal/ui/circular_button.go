@@ -1,22 +1,19 @@
 package ui
 
 import (
-	"image/color"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
-// CircularButton 圆形按钮组件
+// CircularButton 圆形按钮组件，仅用主题按钮色，不复用、不按重要性区分。
 type CircularButton struct {
 	widget.BaseWidget
-	icon       fyne.Resource
-	onTapped   func()
-	importance widget.Importance
-	size       float32
-	appState   *AppState
+	icon     fyne.Resource
+	onTapped func()
+	size     float32
+	appState *AppState
 }
 
 // NewCircularButton 创建新的圆形按钮
@@ -29,20 +26,13 @@ type CircularButton struct {
 // 返回：圆形按钮实例
 func NewCircularButton(icon fyne.Resource, onTapped func(), size float32, appState *AppState) *CircularButton {
 	btn := &CircularButton{
-		icon:       icon,
-		onTapped:   onTapped,
-		importance: widget.LowImportance,
-		size:       size,
-		appState:   appState,
+		icon:     icon,
+		onTapped: onTapped,
+		size:     size,
+		appState: appState,
 	}
 	btn.ExtendBaseWidget(btn)
 	return btn
-}
-
-// SetImportance 设置按钮重要性
-func (cb *CircularButton) SetImportance(importance widget.Importance) {
-	cb.importance = importance
-	cb.Refresh()
 }
 
 // SetIcon 设置图标
@@ -64,7 +54,11 @@ func (cb *CircularButton) MinSize() fyne.Size {
 
 // CreateRenderer 创建渲染器
 func (cb *CircularButton) CreateRenderer() fyne.WidgetRenderer {
-	bgColor := CurrentThemeColor(cb.appState.App, theme.ColorNameButton)
+	var app fyne.App
+	if cb.appState != nil {
+		app = cb.appState.App
+	}
+	bgColor := CurrentThemeColor(app, theme.ColorNameButton)
 	circle := canvas.NewCircle(bgColor)
 	circle.StrokeWidth = 0
 
@@ -125,42 +119,11 @@ func (r *circularButtonRenderer) Objects() []fyne.CanvasObject {
 
 // Refresh 刷新渲染
 func (r *circularButtonRenderer) Refresh() {
-	// 根据重要性设置颜色
-	var bgColor color.Color
-	bgColor = CurrentThemeColor(r.button.appState.App, theme.ColorNameButton)
-	// switch r.button.importance {
-	// case widget.SuccessImportance:
-	// 	if r.button.appState != nil && r.button.appState.App != nil {
-	// 		bgColor = CurrentThemeColor(r.button.appState.App, theme.ColorNameSuccess)
-	// 	} else {
-	// 		bgColor = theme.Color(theme.ColorNameSuccess)
-	// 	}
-	// case widget.HighImportance:
-	// 	if r.button.appState != nil && r.button.appState.App != nil {
-	// 		bgColor = CurrentThemeColor(r.button.appState.App, theme.ColorNamePrimary)
-	// 	} else {
-	// 		bgColor = theme.Color(theme.ColorNamePrimary)
-	// 	}
-	// case widget.MediumImportance:
-	// 	if r.button.appState != nil && r.button.appState.App != nil {
-	// 		bgColor = CurrentThemeColor(r.button.appState.App, theme.ColorNameButton)
-	// 	} else {
-	// 		bgColor = theme.Color(theme.ColorNameButton)
-	// 	}
-	// case widget.LowImportance:
-	// 	if r.button.appState != nil && r.button.appState.App != nil {
-	// 		bgColor = CurrentThemeColor(r.button.appState.App, theme.ColorNameInputBackground)
-	// 	} else {
-	// 		bgColor = theme.Color(theme.ColorNameInputBackground)
-	// 	}
-	// default:
-	// 	if r.button.appState != nil && r.button.appState.App != nil {
-	// 		bgColor = CurrentThemeColor(r.button.appState.App, theme.ColorNameButton)
-	// 	} else {
-	// 		bgColor = theme.Color(theme.ColorNameButton)
-	// 	}
-	// }
-
+	var app fyne.App
+	if r.button.appState != nil {
+		app = r.button.appState.App
+	}
+	bgColor := CurrentThemeColor(app, theme.ColorNameButton)
 	r.circle.FillColor = bgColor
 	r.circle.StrokeColor = bgColor
 

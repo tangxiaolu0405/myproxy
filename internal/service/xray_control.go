@@ -77,11 +77,15 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 		xcs.logCallback("INFO", fmt.Sprintf("开始启动xray-core代理: %s", selectedNode.Name))
 	}
 
-	// 读取直连路由配置
+	// 读取直连路由配置：如果用户配置为空，则使用默认路由
 	var routing *xray.RoutingOptions
 	if xcs.config != nil {
 		routes := xcs.config.GetDirectRoutes()
 		useProxy := xcs.config.GetDirectRoutesUseProxy()
+		// 如果用户配置为空，使用默认路由
+		if len(routes) == 0 {
+			routes = xcs.config.GetDefaultDirectRoutes()
+		}
 		if len(routes) > 0 {
 			routing = &xray.RoutingOptions{
 				DirectRoutes:         routes,

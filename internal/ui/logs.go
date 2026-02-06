@@ -67,26 +67,26 @@ func NewLogsPanel(appState *AppState) *LogsPanel {
 
 	// 日志内容 - 使用 RichText 以支持自定义文本颜色
 	lp.logContent = widget.NewRichText()
-	lp.logContent.Wrapping = fyne.TextWrapOff // 关闭自动换行，使用水平滚动
+	lp.logContent.Wrapping = fyne.TextWrapWord // 启用自动换行，适配窄屏显示
 	// 设置等宽字体样式和初始段落样式（优化行高）
 	lp.logContent.Segments = []widget.RichTextSegment{}
 
-	// 日志级别选择
+	// 日志级别选择器：仅用于过滤显示，不影响日志输出级别
 	lp.levelSel = widget.NewSelect(
 		[]string{"全部", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
 		func(value string) {
 			if lp.typeSel != nil { // 确保 typeSel 已初始化
-				lp.refreshDisplay()
+				lp.refreshDisplay() // 仅刷新显示，不修改日志级别配置
 			}
 		},
 	)
 
-	// 日志类型选择（添加 xray 类型）
+	// 日志类型选择器：仅用于过滤显示
 	lp.typeSel = widget.NewSelect(
 		[]string{"全部", "app", "proxy", "xray"},
 		func(value string) {
 			if lp.levelSel != nil { // 确保 levelSel 已初始化
-				lp.refreshDisplay()
+				lp.refreshDisplay() // 仅刷新显示
 			}
 		},
 	)
@@ -109,51 +109,26 @@ func NewLogsPanel(appState *AppState) *LogsPanel {
 // Build 构建并返回日志显示面板的 UI 组件。
 // 返回：包含过滤控件和日志内容的容器组件
 func (lp *LogsPanel) Build() fyne.CanvasObject {
-	// 创建折叠/展开按钮 - 使用图标按钮
-	var collapseIcon fyne.Resource
-	if lp.isCollapsed {
-		collapseIcon = theme.MenuExpandIcon()
-	} else {
-		collapseIcon = theme.MenuDropDownIcon()
-	}
-	lp.collapseBtn = NewIconButton(collapseIcon, func() {
-		lp.toggleCollapse()
-	})
-	lp.updateCollapseButtonText()
-
-	// 标题标签（使用标题样式）
-	titleLabel := NewTitleLabel("日志")
-
 	// 级别标签（使用副标题样式）
 	levelLabel := widget.NewLabel("级别")
 
 	// 类型标签（使用副标题样式）
 	typeLabel := widget.NewLabel("类型")
 
-	// 刷新按钮 - 添加图标
-	refreshBtn := NewButtonWithIcon("刷新", theme.ViewRefreshIcon(), func() {
-		lp.loadInitialLogs()
-	})
-
-	// 顶部控制栏 - 优化布局和间距
-	topBar := container.NewHBox(
-		lp.collapseBtn, // 折叠/展开按钮
-		NewSpacer(SpacingSmall),
-		titleLabel,
-		NewSpacer(SpacingLarge),
+	// 顶部控制栏：仅保留级别/类型筛选（无刷新按钮），在窄宽度下自然纵向排列。
+	levelRow := container.NewHBox(
 		levelLabel,
 		NewSpacer(SpacingSmall),
 		container.NewGridWrap(fyne.NewSize(100, 40), lp.levelSel),
-		NewSpacer(SpacingLarge),
+		layout.NewSpacer(),
+	)
+	typeRow := container.NewHBox(
 		typeLabel,
 		NewSpacer(SpacingSmall),
 		container.NewGridWrap(fyne.NewSize(100, 40), lp.typeSel),
-		NewSpacer(SpacingLarge),
-		refreshBtn,
 		layout.NewSpacer(),
 	)
-	// 添加内边距
-	topBar = container.NewPadded(topBar)
+	topBar := container.NewPadded(container.NewVBox(levelRow, typeRow))
 
 	// 日志内容区域
 	lp.logScroll = container.NewScroll(lp.logContent)
@@ -169,9 +144,6 @@ func (lp *LogsPanel) Build() fyne.CanvasObject {
 		nil,
 		lp.logScroll,
 	)
-
-	// 根据折叠状态设置初始显示
-	lp.updateCollapseState()
 
 	return lp.panelContainer
 }
@@ -426,7 +398,7 @@ func (lp *LogsPanel) parseLogLine(line string) *LogEntry {
 	}
 }
 
-// refreshDisplay 根据当前过滤条件刷新显示
+// refreshDisplay 根据当前过滤条件刷新显示（仅过滤显示，不影响日志输出级别）
 func (lp *LogsPanel) refreshDisplay() {
 	if lp.logContent == nil || lp.levelSel == nil || lp.typeSel == nil {
 		return

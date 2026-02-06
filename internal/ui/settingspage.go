@@ -53,6 +53,43 @@ func (m SettingsMenu) String() string {
 	}
 }
 
+// fixedMenuContentLayout 固定左侧菜单宽度、右侧内容占满剩余空间的布局；分隔不随窗口拖拽变化。
+type fixedMenuContentLayout struct {
+	menuWidth float32
+}
+
+func (f fixedMenuContentLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	if len(objects) != 2 {
+		return fyne.NewSize(0, 0)
+	}
+	menuMin := objects[0].MinSize()
+	contentMin := objects[1].MinSize()
+	w := f.menuWidth
+	if w < menuMin.Width {
+		w = menuMin.Width
+	}
+	return fyne.NewSize(w+contentMin.Width, max(menuMin.Height, contentMin.Height))
+}
+
+func (f fixedMenuContentLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	if len(objects) != 2 {
+		return
+	}
+	menuMin := objects[0].MinSize()
+	w := f.menuWidth
+	if w < menuMin.Width {
+		w = menuMin.Width
+	}
+	contentW := size.Width - w
+	if contentW < 0 {
+		contentW = 0
+	}
+	objects[0].Resize(fyne.NewSize(w, size.Height))
+	objects[0].Move(fyne.NewPos(0, 0))
+	objects[1].Resize(fyne.NewSize(contentW, size.Height))
+	objects[1].Move(fyne.NewPos(w, 0))
+}
+
 // SettingsPage 管理应用设置的显示和操作。
 // 左侧菜单栏：外观 | 直连路由 | 日志 | 关于；右侧为对应的内容区。
 type SettingsPage struct {
@@ -67,6 +104,9 @@ type SettingsPage struct {
 	routesData    []string
 	routeAddEntry *widget.Entry
 	routeUseProxy *widget.Check
+
+	// 日志：在设置页「日志」菜单中复用，用于查看日志
+	logsPanel *LogsPanel
 }
 
 // NewSettingsPage 创建设置页面实例。
@@ -113,9 +153,8 @@ func (sp *SettingsPage) Build() fyne.CanvasObject {
 	sp.contentCard.Add(sp.buildAppearanceContent())
 	contentArea := container.NewScroll(container.NewPadded(sp.contentCard))
 
-	// 左右分栏
-	mainContent := container.NewHSplit(menuBox, contentArea)
-	mainContent.SetOffset(0.15)
+	// 左右分栏：菜单固定宽度，完整展示菜单项；内容区占剩余空间（分隔不随窗口拖拽变化）
+	mainContent := container.New(&fixedMenuContentLayout{menuWidth: 140}, menuBox, contentArea)
 
 	sp.content = container.NewBorder(
 		headerBar,
@@ -239,7 +278,7 @@ func (sp *SettingsPage) buildAppearanceContent() fyne.CanvasObject {
 func (sp *SettingsPage) buildDirectRouteContent() fyne.CanvasObject {
 	sp.loadRoutes()
 
-	sp.routeUseProxy = widget.NewCheck("直连列表中的地址也走代理", func(b bool) {
+	sp.routeUseProxy = widget.NewCheck("不走直连", func(b bool) {
 		if sp.appState != nil && sp.appState.ConfigService != nil {
 			_ = sp.appState.ConfigService.SetDirectRoutesUseProxy(b)
 		}
@@ -280,15 +319,21 @@ func (sp *SettingsPage) buildDirectRouteContent() fyne.CanvasObject {
 	listScroll := container.NewScroll(sp.routesList)
 	listScroll.SetMinSize(fyne.NewSize(0, 120))
 
-	return container.NewVBox(
-		widget.NewLabelWithStyle("直连路由", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewSeparator(),
-		sp.routeUseProxy,
-		widget.NewLabel("勾选=走代理，不勾=走直连"),
-		widget.NewLabel("路由列表"),
-		listScroll,
-		widget.NewLabel("添加新路由"),
-		addArea,
+	// 重置按钮：添加默认路由（如果不存在）
+	resetBtn := widget.NewButtonWithIcon("重置", theme.ViewRefreshIcon(), func() {
+		sp.resetToDefaultRoutes()
+	})
+	resetBtn.Importance = widget.LowImportance
+
+	// 使用 Border 布局：顶部固定复选框和重置按钮，中间路由列表占满剩余空间，底部固定添加路由区域
+	topBar := container.NewHBox(sp.routeUseProxy, resetBtn, layout.NewSpacer())
+	routesLabel := widget.NewLabel("路由列表")
+	
+	return container.NewBorder(
+		container.NewVBox(topBar, routesLabel), // 顶部：复选框+重置按钮 + "路由列表"标签
+		addArea,                                // 底部：添加路由输入框（placeholder已说明用途）
+		nil, nil,
+		listScroll,                            // 中间：路由列表占满剩余空间
 	)
 }
 
@@ -300,6 +345,42 @@ func (sp *SettingsPage) loadRoutes() {
 	}
 	if sp.routesData == nil {
 		sp.routesData = []string{}
+	}
+}
+
+// resetToDefaultRoutes 重置直连路由：如果当前列表中没有默认路由则添加（使用map提高效率）
+func (sp *SettingsPage) resetToDefaultRoutes() {
+	if sp.appState == nil || sp.appState.ConfigService == nil {
+		return
+	}
+
+	// 从 ConfigService 获取默认路由
+	defaultRoutes := sp.appState.ConfigService.GetDefaultDirectRoutes()
+	if len(defaultRoutes) == 0 {
+		return
+	}
+
+	// 使用map提高查找效率
+	existingRoutes := make(map[string]bool)
+	for _, route := range sp.routesData {
+		existingRoutes[route] = true
+	}
+
+	// 检查默认路由，如果不存在则添加
+	added := false
+	for _, defaultRoute := range defaultRoutes {
+		if !existingRoutes[defaultRoute] {
+			sp.routesData = append(sp.routesData, defaultRoute)
+			added = true
+		}
+	}
+
+	// 如果有新增，保存并刷新列表
+	if added {
+		sp.saveRoutes()
+		if sp.routesList != nil {
+			sp.routesList.Refresh()
+		}
 	}
 }
 
@@ -419,37 +500,33 @@ func isLikelyIPOrCIDR(s string) bool {
 	return true
 }
 
-// buildLogContent 构建设置「日志」内容区。
+// buildLogContent 构建设置「日志」内容区，嵌入完整日志面板用于查看日志。
 func (sp *SettingsPage) buildLogContent() fyne.CanvasObject {
-	opts := []string{"debug", "info", "warn", "error"}
-	logSelect := widget.NewSelect(opts, func(s string) {
-		sp.onLogLevelChanged(s)
-	})
-	currentLevel := "info"
-	if sp.appState != nil && sp.appState.Logger != nil {
-		currentLevel = sp.appState.Logger.GetLogLevel()
+	if sp.logsPanel == nil {
+		sp.logsPanel = NewLogsPanel(sp.appState)
 	}
-	logSelect.SetSelected(currentLevel)
-
-	return container.NewVBox(
-		widget.NewLabelWithStyle("日志", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		widget.NewSeparator(),
-		container.NewVBox(
-			widget.NewLabel("级别"),
-			logSelect,
-			widget.NewLabel("debug / info / warn / error"),
-		),
-	)
+	return sp.logsPanel.Build()
 }
 
 // buildAboutContent 构建设置「关于」内容区。
 func (sp *SettingsPage) buildAboutContent() fyne.CanvasObject {
+	titleLabel := widget.NewLabelWithStyle("关于", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	
+	versionLabel := widget.NewLabel("myproxy  版本 1.0.0")
+	versionLabel.Wrapping = fyne.TextWrapWord // 启用自动换行，适配窄屏显示
+	
+	descLabel := widget.NewLabel("轻量级代理管理工具，基于 Xray-core 与 Fyne")
+	descLabel.Wrapping = fyne.TextWrapWord // 启用自动换行，适配窄屏显示
+	
+	emailLabel := widget.NewLabel("邮箱: lucastq1019@gmail.com")
+	emailLabel.Wrapping = fyne.TextWrapWord // 启用自动换行，适配窄屏显示
+	
 	return container.NewVBox(
-		widget.NewLabelWithStyle("关于", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		titleLabel,
 		widget.NewSeparator(),
-		widget.NewLabel("myproxy  版本 1.0.0"),
-		widget.NewLabel("轻量级代理管理工具，基于 Xray-core 与 Fyne"),
-		widget.NewLabel("邮箱: lucastq1019@gmail.com"),
+		versionLabel,
+		descLabel,
+		emailLabel,
 	)
 }
 

@@ -299,9 +299,10 @@ func (r *trafficChartRenderer) Destroy() {
 }
 
 // toRGBA 将 theme 返回的 color.Color 转为 color.RGBA，便于 canvas 使用。
+// c 为 nil 时使用默认主题背景色。
 func toRGBA(c color.Color) color.RGBA {
 	if c == nil {
-		return color.RGBA{R: 23, G: 23, B: 23, A: 255}
+		c = theme.DefaultTheme().Color(theme.ColorNameBackground, theme.VariantDark)
 	}
 	r, g, b, a := c.RGBA()
 	return color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)}

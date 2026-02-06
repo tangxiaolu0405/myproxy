@@ -97,15 +97,16 @@ func createLShapeIcon(size int, name string, appState *AppState) fyne.Resource {
 	monochromeTheme := NewMonochromeTheme(themeVariant)
 	bgColorValue := monochromeTheme.Color(theme.ColorNameBackground, themeVariant)
 
-	// 转换为 RGBA
+	// 转换为 RGBA，失败时使用默认主题背景色
 	var bgColor color.RGBA
 	if nrgba, ok := bgColorValue.(color.NRGBA); ok {
 		bgColor = color.RGBA{R: nrgba.R, G: nrgba.G, B: nrgba.B, A: nrgba.A}
 	} else if rgba, ok := bgColorValue.(color.RGBA); ok {
 		bgColor = rgba
 	} else {
-		// 默认颜色（如果转换失败）
-		bgColor = color.RGBA{23, 28, 34, 255}
+		fallback := theme.DefaultTheme().Color(theme.ColorNameBackground, themeVariant)
+		r, g, b, a := fallback.RGBA()
+		bgColor = color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)}
 	}
 
 	// 使用新的绘制方式创建图标
