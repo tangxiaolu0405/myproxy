@@ -6,40 +6,71 @@ on:
       - 'v*' # 只有推送到 v1.0.0 这种标签时才触发发布
 
 jobs:
-  release:
-    runs-on: ubuntu-latest # Fyne-cross 在 Linux 环境下运行最稳
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [windows, linux, darwin]
     steps:
       - uses: actions/checkout@v4
 
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25' # 根据你的项目调整版本
+          go-version: '1.22'
 
-      # 使用 fyne-cross 进行交叉编译
-      # 使用 fyne-cross 进行交叉编译，添加 -app-id 参数
-      - name: 编译多平台二进制文件
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxi-dev \
+            libgl1-mesa-dev
+
+      - name: 安装 fyne-cross
         run: |
           go install github.com/fyne-io/fyne-cross@latest
-          
-          # 注意：把 com.yourname.myproxy 换成你自己的标识
-          # 编译 Windows
-          fyne-cross windows -arch=amd64 -app-id com.lucastq.myproxy
-          
-          # 编译 Linux
-          fyne-cross linux -arch=amd64 -app-id com.lucastq.myproxy
-          
-          # 编译 macOS
-          fyne-cross darwin -arch=amd64 -app-id com.lucastq.myproxy
 
-      # 自动创建 GitHub Release 并上传文件
+      - name: 编译 ${{ matrix.platform }}
+        run: |
+          fyne-cross ${{ matrix.platform }} -arch=amd64 -app-id com.lucastq.myproxy
+        env:
+          PATH: ${{ env.PATH }}:${{ env.HOME }}/go/bin
+
+      - name: 列出编译结果
+        run: |
+          ls -la fyne-cross/dist/${{ matrix.platform }}-amd64/
+
+      - name: 上传 ${{ matrix.platform }} 构建物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-build
+          path: fyne-cross/dist/${{ matrix.platform }}-amd64/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载所有构建物
+        uses: actions/download-artifact@v4
+
+      - name: 列出所有文件
+        run: |
+          find . -type f -name "*.zip" -o -name "*.tar.xz" -o -name "*.app.tar.xz" | head -20
+
       - name: 发布到 Release
         uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            fyne-cross/dist/windows-amd64/*.zip
-            fyne-cross/dist/linux-amd64/*.tar.xz
-            fyne-cross/dist/darwin-amd64/*.app.tar.xz
+            windows-build/*.zip
+            linux-build/*.tar.xz
+            darwin-build/*.app.tar.xz
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
