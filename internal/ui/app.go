@@ -15,6 +15,7 @@ import (
 	"myproxy.com/p/internal/logging"
 	"myproxy.com/p/internal/service"
 	"myproxy.com/p/internal/store"
+	"myproxy.com/p/internal/systemproxy"
 	"myproxy.com/p/internal/subscription"
 	"myproxy.com/p/internal/utils"
 	"myproxy.com/p/internal/xray"
@@ -400,6 +401,10 @@ func (a *AppState) autoLoadProxyConfig() error {
 func (a *AppState) Cleanup() {
 	a.stopWindowSizeSaveTimer()
 
+	// 退出时清除系统代理（始终执行），避免本程序写入的 WinINet 等配置在进程结束后仍指向已关闭的入站端口，导致用户无法上网。
+	// 终端 / Git 代理仅在用户曾通过本程序启用对应选项时清除，避免误删用户自行配置的其他环境变量。
+	a.clearProxiesOnShutdown()
+
 	if a.MainWindow != nil {
 		a.MainWindow.Cleanup()
 		a.MainWindow = nil
@@ -442,6 +447,30 @@ func (a *AppState) Cleanup() {
 
 	if a.DiagnosticsService != nil {
 		a.DiagnosticsService.Stop()
+	}
+}
+
+// clearProxiesOnShutdown 在进程退出路径上尽量恢复系统网络设置：先清系统代理，再按需清终端与 Git 全局代理。
+func (a *AppState) clearProxiesOnShutdown() {
+	localPort := database.DefaultMixedInboundPort
+	if a.ConfigService != nil {
+		localPort = a.ConfigService.GetLocalInboundPort()
+	}
+	sp := systemproxy.NewSystemProxy(database.LocalMixedInboundListenHost, localPort)
+	if err := sp.ClearSystemProxy(); err != nil {
+		if a.SafeLogger != nil {
+			a.SafeLogger.Warn(fmt.Sprintf("退出时清除系统代理失败: %v", err))
+		}
+	}
+	if a.ConfigService != nil && a.ConfigService.GetTerminalProxyEnabled() {
+		if err := sp.ClearTerminalProxy(); err != nil && a.SafeLogger != nil {
+			a.SafeLogger.Warn(fmt.Sprintf("退出时清除终端代理失败: %v", err))
+		}
+	}
+	if a.ConfigService != nil && a.ConfigService.GetGitProxyEnabled() {
+		if err := sp.ClearGitProxy(); err != nil && a.SafeLogger != nil {
+			a.SafeLogger.Warn(fmt.Sprintf("退出时清除 Git 全局代理失败: %v", err))
+		}
 	}
 }
 
