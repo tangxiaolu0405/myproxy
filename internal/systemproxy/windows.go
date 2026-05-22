@@ -261,7 +261,7 @@ func broadcastSettingChange(target string) error {
 		0,
 		uintptr(unsafe.Pointer(targetPtr)),
 		uintptr(smtoAbortIfHung),
-		uintptr(5000),
+		uintptr(500),
 		uintptr(unsafe.Pointer(&result)),
 	)
 	if ret == 0 {

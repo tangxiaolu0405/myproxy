@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -336,6 +337,8 @@ type MainWindow struct {
 
 	// 状态标志
 	systemProxyRestored bool // 标记系统代理状态是否已恢复（避免重复恢复）
+
+	proxyOpMu sync.Mutex // 防止并发的代理操作（点击代理开关/系统代理按钮时）
 }
 
 // NewMainWindow 创建并初始化主窗口。
@@ -800,6 +803,11 @@ func (mw *MainWindow) onToggleProxy() {
 		return
 	}
 
+	if !mw.proxyOpMu.TryLock() {
+		return // 已有代理操作在进行中，防止快速连点导致崩溃
+	}
+	defer mw.proxyOpMu.Unlock()
+
 	// 检查代理是否正在运行
 	isRunning := false
 	if mw.appState.XrayInstance != nil {
@@ -1006,6 +1014,12 @@ func (mw *MainWindow) RestartXrayIfRunningForInboundListenChange() {
 	if mw == nil || mw.appState == nil || mw.appState.XrayControlService == nil {
 		return
 	}
+
+	if !mw.proxyOpMu.TryLock() {
+		return // 已有代理操作在进行中
+	}
+	defer mw.proxyOpMu.Unlock()
+
 	if mw.appState.XrayInstance == nil || !mw.appState.XrayInstance.IsRunning() {
 		return
 	}
@@ -1220,7 +1234,7 @@ func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore
 		}
 
 	case SystemProxyModeAuto:
-		_ = mw.systemProxy.ClearSystemProxy()
+		// SetSystemProxy 会覆盖所有注册表键，无需先 ClearSystemProxy 再 Set，减少一次 WinINet/SendMessageTimeout 调用
 		shouldSetTerminal := false
 		shouldSetGit := false
 		if mw.appState != nil && mw.appState.ConfigService != nil {
@@ -1291,21 +1305,36 @@ func (mw *MainWindow) onProxyModeButtonClicked(mode SystemProxyMode) {
 	_ = mw.SetSystemProxyMode(mode)
 }
 
-// SetSystemProxyMode 设置系统代理模式（公共方法，供托盘等外部调用）
-// 参数：
-//   - mode: 系统代理模式
+// SetSystemProxyMode 设置系统代理模式（公共方法，供托盘等外部调用）。
+// 按钮状态立即在 UI 线程更新；阻塞的 Windows API 调用（注册表/WinINet/SendMessageTimeout）
+// 在后台 goroutine 执行，避免卡死 UI 线程导致程序崩溃。
 func (mw *MainWindow) SetSystemProxyMode(mode SystemProxyMode) error {
 	if mw.appState == nil {
 		return fmt.Errorf("appState 未初始化")
 	}
 
-	// 更新按钮选中状态（如果按钮已创建）
+	// UI 更新在主线程立即执行
 	mw.updateProxyModeButtonsState(mode)
 
-	// 应用系统代理模式（保存到 Store）
-	err := mw.applySystemProxyModeCore(mode, true)
-	mw.appState.refreshTrayProxyMenu()
-	return err
+	// 将阻塞的系统 API 调用移到后台 goroutine
+	go func() {
+		if !mw.proxyOpMu.TryLock() {
+			return // 已有操作在进行中，跳过本次点击
+		}
+		defer mw.proxyOpMu.Unlock()
+
+		err := mw.applySystemProxyModeCore(mode, true)
+		if err != nil && mw.appState != nil && mw.appState.Logger != nil {
+			mw.appState.Logger.Error("系统代理操作失败: %v", err)
+		}
+
+		// 托盘菜单刷新需要在 UI 线程
+		fyne.Do(func() {
+			mw.appState.refreshTrayProxyMenu()
+		})
+	}()
+
+	return nil
 }
 
 // GetCurrentSystemProxyMode 获取当前系统代理模式
@@ -1394,6 +1423,7 @@ func (mw *MainWindow) applySystemProxyModeWithoutSave(mode SystemProxyMode) erro
 // ReapplyPersistedSystemProxyFromConfig 按数据库中已保存的模式重新应用系统代理、终端环境变量与 Git 全局代理（不写回 Store）。
 // 终端 / Git 仅为设置项：仅在当前持久化模式为「自动配置系统代理」时生效。
 // 用于设置页变更代理类型或相关勾选后，与主页「系统」模式立即同步。
+// 系统 API 调用在后台 goroutine 执行，避免阻塞 UI 线程。
 func (mw *MainWindow) ReapplyPersistedSystemProxyFromConfig() error {
 	if mw.appState == nil || mw.appState.ConfigService == nil {
 		return nil
@@ -1406,5 +1436,14 @@ func (mw *MainWindow) ReapplyPersistedSystemProxyFromConfig() error {
 	if mode != SystemProxyModeAuto {
 		return nil
 	}
-	return mw.applySystemProxyModeCore(SystemProxyModeAuto, false)
+
+	go func() {
+		if !mw.proxyOpMu.TryLock() {
+			return
+		}
+		defer mw.proxyOpMu.Unlock()
+		_ = mw.applySystemProxyModeCore(SystemProxyModeAuto, false)
+	}()
+
+	return nil
 }
