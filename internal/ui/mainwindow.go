@@ -874,6 +874,11 @@ func truncateDisplayText(text string, maxRunes int) string {
 // startProxy 启动代理（使用当前选中的节点）
 // 使用 XrayControlService 来处理代理启动逻辑
 func (mw *MainWindow) startProxy() {
+	mw.startProxyInternal(true)
+}
+
+// startProxyInternal 启动代理；showSuccessDialog 为 false 时不弹出成功对话框（托盘切换等场景）。
+func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) {
 	if mw.appState == nil {
 		mw.logAndShowError("启动代理失败", fmt.Errorf("AppState 未初始化"))
 		return
@@ -941,14 +946,40 @@ func (mw *MainWindow) startProxy() {
 		}
 	}
 
-	// 显示成功对话框
-	if mw.appState.Window != nil && result.XrayInstance != nil {
+	if showSuccessDialog && mw.appState.Window != nil && result.XrayInstance != nil {
 		selectedNode := mw.appState.Store.Nodes.GetSelected()
 		if selectedNode != nil {
 			message := fmt.Sprintf("代理已启动\n节点: %s\n端口: %d", selectedNode.Name, result.XrayInstance.GetPort())
 			dialog.ShowInformation("代理启动成功", message, mw.appState.Window)
 		}
 	}
+}
+
+// SwitchToServer 选中节点；若代理已在运行则切换并重连。
+func (mw *MainWindow) SwitchToServer(id string) error {
+	if mw.appState == nil || mw.appState.Store == nil {
+		return fmt.Errorf("主窗口: AppState 未初始化")
+	}
+	if err := mw.appState.Store.SelectServer(id); err != nil {
+		return fmt.Errorf("主窗口: 选中节点失败: %w", err)
+	}
+
+	isRunning := mw.appState.XrayInstance != nil && mw.appState.XrayInstance.IsRunning()
+	if isRunning {
+		if !mw.proxyOpMu.TryLock() {
+			return fmt.Errorf("主窗口: 代理操作正在进行中")
+		}
+		defer mw.proxyOpMu.Unlock()
+		mw.startProxyInternal(false)
+		return nil
+	}
+
+	mw.appState.UpdateProxyStatus()
+	if mw.nodePageInstance != nil {
+		mw.nodePageInstance.Refresh()
+	}
+	mw.updateHomeServerNameLabel()
+	return nil
 }
 
 // StopProxy 停止代理（公共方法，供外部调用）

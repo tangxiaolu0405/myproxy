@@ -95,10 +95,10 @@ func (a *AppState) UpdateProxyStatus() {
 	a.refreshTrayProxyMenu()
 }
 
-// refreshTrayProxyMenu 刷新托盘代理/模式菜单，使托盘状态与 AppState（Store/ConfigService）一致。
+// refreshTrayProxyMenu 刷新托盘代理/模式/节点菜单，使托盘状态与 AppState 一致。
 func (a *AppState) refreshTrayProxyMenu() {
 	if a.TrayManager != nil {
-		a.TrayManager.RefreshProxyModeMenu()
+		a.TrayManager.RefreshTrayMenu()
 	}
 }
 
@@ -400,6 +400,10 @@ func (a *AppState) autoLoadProxyConfig() error {
 
 func (a *AppState) Cleanup() {
 	a.stopWindowSizeSaveTimer()
+
+	if a.TrayManager != nil {
+		a.TrayManager.StopPingRefresh()
+	}
 
 	// 退出时清除系统代理（始终执行），避免本程序写入的 WinINet 等配置在进程结束后仍指向已关闭的入站端口，导致用户无法上网。
 	// 终端 / Git 代理仅在用户曾通过本程序启用对应选项时清除，避免误删用户自行配置的其他环境变量。

@@ -1,9 +1,17 @@
 package ui
 
 import (
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
+	"myproxy.com/p/internal/model"
 )
+
+const trayPingRefreshInterval = 10 * time.Second
 
 // TrayManager 管理系统托盘
 type TrayManager struct {
@@ -11,6 +19,18 @@ type TrayManager struct {
 	app                fyne.App
 	window             fyne.Window
 	proxyModeMenuItems [2]*fyne.MenuItem // 系统代理模式菜单项（清除、系统）
+
+	pingTicker  *time.Ticker
+	pingStop    chan struct{}
+	pingMu      sync.Mutex
+	pingRunning bool
+
+	serverMenuMu     sync.Mutex
+	currentNodeID    string
+	currentNodeLabel string
+	proxyRunning     bool
+	topAlternatives  []trayNodeEntry
+	lastMenuSnapshot string
 }
 
 // NewTrayManager 创建系统托盘管理器
@@ -43,7 +63,9 @@ func (tm *TrayManager) SetupTray() {
 			return
 		}
 		desk.SetSystemTrayIcon(icon)
+		tm.syncCurrentNodeFromAppState(nil)
 		tm.createTrayMenu(desk)
+		tm.StartPingRefresh()
 	} else {
 		tm.appState.SafeLogger.Warn("应用不支持桌面扩展，无法显示系统托盘")
 	}
@@ -62,6 +84,246 @@ func (tm *TrayManager) RefreshTrayIcon() {
 	}
 }
 
+// StartPingRefresh 启动托盘节点测速与 Top5 刷新（首次立即执行，之后每 10 秒）。
+func (tm *TrayManager) StartPingRefresh() {
+	tm.StopPingRefresh()
+	tm.pingStop = make(chan struct{})
+	tm.pingTicker = time.NewTicker(trayPingRefreshInterval)
+	go tm.pingRefreshLoop()
+}
+
+// StopPingRefresh 停止托盘节点测速定时器。
+func (tm *TrayManager) StopPingRefresh() {
+	if tm.pingStop != nil {
+		close(tm.pingStop)
+		tm.pingStop = nil
+	}
+	if tm.pingTicker != nil {
+		tm.pingTicker.Stop()
+		tm.pingTicker = nil
+	}
+}
+
+func (tm *TrayManager) pingRefreshLoop() {
+	tm.runPingCycle()
+	for {
+		select {
+		case <-tm.pingTicker.C:
+			tm.runPingCycle()
+		case <-tm.pingStop:
+			return
+		}
+	}
+}
+
+func (tm *TrayManager) runPingCycle() {
+	tm.pingMu.Lock()
+	if tm.pingRunning {
+		tm.pingMu.Unlock()
+		return
+	}
+	tm.pingRunning = true
+	tm.pingMu.Unlock()
+
+	defer func() {
+		tm.pingMu.Lock()
+		tm.pingRunning = false
+		tm.pingMu.Unlock()
+	}()
+
+	if tm.appState == nil || tm.appState.Ping == nil || tm.appState.ServerService == nil {
+		return
+	}
+
+	servers := tm.enabledServersFromList()
+	if len(servers) == 0 {
+		fyne.Do(func() {
+			tm.applyPingResults(nil)
+		})
+		return
+	}
+
+	results := tm.appState.Ping.TestAllServersDelay(servers)
+
+	if tm.appState.Store != nil && tm.appState.Store.Nodes != nil {
+		for id, delay := range results {
+			if delay > 0 {
+				_ = tm.appState.Store.Nodes.UpdateDelay(id, delay)
+			}
+		}
+	}
+
+	fyne.Do(func() {
+		tm.applyPingResults(results)
+	})
+}
+
+func (tm *TrayManager) enabledServersFromList() []model.Node {
+	if tm.appState == nil || tm.appState.ServerService == nil {
+		return nil
+	}
+	all := tm.appState.ServerService.ListServers()
+	enabled := make([]model.Node, 0, len(all))
+	for _, s := range all {
+		if s.Enabled {
+			enabled = append(enabled, s)
+		}
+	}
+	return enabled
+}
+
+func (tm *TrayManager) applyPingResults(delays map[string]int) {
+	currentID := ""
+	if tm.appState != nil && tm.appState.Store != nil && tm.appState.Store.Nodes != nil {
+		currentID = tm.appState.Store.Nodes.GetSelectedID()
+	}
+
+	tm.syncCurrentNodeFromAppState(delays)
+
+	servers := tm.enabledServersFromList()
+	if delays == nil {
+		delays = make(map[string]int)
+		for _, s := range servers {
+			if s.Delay > 0 {
+				delays[s.ID] = s.Delay
+			}
+		}
+	}
+
+	tm.serverMenuMu.Lock()
+	tm.topAlternatives = pickTopAlternatives(servers, delays, currentID, trayTopAlternativesCount)
+	tm.serverMenuMu.Unlock()
+
+	tm.refreshTrayMenuIfNeeded()
+}
+
+func (tm *TrayManager) syncCurrentNodeFromAppState(delays map[string]int) {
+	tm.serverMenuMu.Lock()
+	defer tm.serverMenuMu.Unlock()
+
+	tm.proxyRunning = tm.appState != nil &&
+		tm.appState.XrayInstance != nil &&
+		tm.appState.XrayInstance.IsRunning()
+
+	var selected *model.Node
+	if tm.appState != nil && tm.appState.Store != nil && tm.appState.Store.Nodes != nil {
+		selected = tm.appState.Store.Nodes.GetSelected()
+	}
+
+	if selected == nil {
+		tm.currentNodeID = ""
+		tm.currentNodeLabel = "未选中节点"
+		return
+	}
+
+	tm.currentNodeID = selected.ID
+	delay := selected.Delay
+	if delays != nil {
+		if d, ok := delays[selected.ID]; ok && d > 0 {
+			delay = d
+		}
+	}
+
+	if tm.proxyRunning {
+		if delay > 0 {
+			tm.currentNodeLabel = fmt.Sprintf("%s (%dms)", selected.Name, delay)
+		} else {
+			tm.currentNodeLabel = selected.Name
+		}
+		return
+	}
+	tm.currentNodeLabel = fmt.Sprintf("当前选中: %s", selected.Name)
+}
+
+func (tm *TrayManager) menuSnapshotLocked() string {
+	var b strings.Builder
+	b.WriteString(tm.currentNodeID)
+	b.WriteByte('|')
+	b.WriteString(tm.currentNodeLabel)
+	b.WriteByte('|')
+	if tm.proxyRunning {
+		b.WriteByte('1')
+	} else {
+		b.WriteByte('0')
+	}
+	for _, alt := range tm.topAlternatives {
+		fmt.Fprintf(&b, "|%s:%d", alt.id, alt.delay)
+	}
+	mode := getSystemProxyModeFromAppState(tm.appState)
+	b.WriteString("|mode:")
+	b.WriteString(mode.ShortString())
+	return b.String()
+}
+
+// RefreshTrayMenu 同步当前节点/代理状态并刷新托盘菜单（代理模式与节点区一并更新）。
+func (tm *TrayManager) RefreshTrayMenu() {
+	tm.syncCurrentNodeFromAppState(nil)
+	tm.refreshTrayMenuIfNeeded()
+}
+
+func (tm *TrayManager) refreshTrayMenuIfNeeded() {
+	tm.serverMenuMu.Lock()
+	snapshot := tm.menuSnapshotLocked()
+	changed := snapshot != tm.lastMenuSnapshot
+	if changed {
+		tm.lastMenuSnapshot = snapshot
+	}
+	tm.serverMenuMu.Unlock()
+
+	if !changed {
+		return
+	}
+	if desk, ok := tm.app.(desktop.App); ok {
+		tm.createTrayMenu(desk)
+	}
+}
+
+func (tm *TrayManager) buildServerMenuItems() []*fyne.MenuItem {
+	tm.serverMenuMu.Lock()
+	currentLabel := tm.currentNodeLabel
+	currentID := tm.currentNodeID
+	running := tm.proxyRunning
+	alts := make([]trayNodeEntry, len(tm.topAlternatives))
+	copy(alts, tm.topAlternatives)
+	tm.serverMenuMu.Unlock()
+
+	items := make([]*fyne.MenuItem, 0, len(alts)+3)
+
+	currentItem := fyne.NewMenuItem(currentLabel, nil)
+	if running && currentID != "" {
+		currentItem.Checked = true
+	}
+	items = append(items, currentItem, fyne.NewMenuItemSeparator())
+
+	if len(alts) == 0 {
+		items = append(items, fyne.NewMenuItem("暂无可用节点", nil))
+		return items
+	}
+
+	for _, alt := range alts {
+		entry := alt
+		label := fmt.Sprintf("%s (%dms)", entry.name, entry.delay)
+		items = append(items, fyne.NewMenuItem(label, func() {
+			tm.onAlternativeSelected(entry.id)
+		}))
+	}
+	return items
+}
+
+func (tm *TrayManager) onAlternativeSelected(id string) {
+	if tm.appState == nil || tm.appState.MainWindow == nil {
+		return
+	}
+	if err := tm.appState.MainWindow.SwitchToServer(id); err != nil {
+		if tm.appState.SafeLogger != nil {
+			tm.appState.SafeLogger.Warn(fmt.Sprintf("托盘切换节点失败: %v", err))
+		}
+		return
+	}
+	tm.syncCurrentNodeFromAppState(nil)
+	tm.refreshTrayMenuIfNeeded()
+}
+
 // createTrayMenu 创建托盘菜单
 func (tm *TrayManager) createTrayMenu(desk desktop.App) {
 	// 创建系统代理模式菜单项（如果尚未创建）
@@ -69,56 +331,59 @@ func (tm *TrayManager) createTrayMenu(desk desktop.App) {
 		tm.proxyModeMenuItems[0] = fyne.NewMenuItem(SystemProxyModeClear.ShortString(), func() {
 			if tm.appState != nil && tm.appState.MainWindow != nil {
 				_ = tm.appState.MainWindow.SetSystemProxyMode(SystemProxyModeClear)
-				// SetSystemProxyMode 内部会调用 RefreshProxyModeMenu，这里不需要再次调用
 			}
 		})
 		tm.proxyModeMenuItems[1] = fyne.NewMenuItem(SystemProxyModeAuto.ShortString(), func() {
 			if tm.appState != nil && tm.appState.MainWindow != nil {
 				_ = tm.appState.MainWindow.SetSystemProxyMode(SystemProxyModeAuto)
-				// SetSystemProxyMode 内部会调用 RefreshProxyModeMenu，这里不需要再次调用
 			}
 		})
 	}
 
-	// 更新菜单项的选中状态
 	tm.updateProxyModeMenuCheckedState()
 
-	// 创建关闭代理菜单项
 	closeProxyMenuItem := fyne.NewMenuItem("关闭代理", func() {
 		if tm.appState != nil && tm.appState.MainWindow != nil {
-			// 停止Xray实例
 			tm.appState.MainWindow.StopProxy()
-			// 清除系统代理
 			if tm.appState.MainWindow != nil {
 				_ = tm.appState.MainWindow.SetSystemProxyMode(SystemProxyModeClear)
 			}
 		}
 	})
 
-	// 创建托盘菜单
-	menu := fyne.NewMenu("SOCKS5 代理客户端",
+	serverItems := tm.buildServerMenuItems()
+
+	menuItems := []*fyne.MenuItem{
 		fyne.NewMenuItem("显示窗口", func() {
 			tm.window.Show()
 			tm.window.RequestFocus()
 		}),
 		fyne.NewMenuItemSeparator(),
-		closeProxyMenuItem, // 关闭代理（停止Xray）
+	}
+	menuItems = append(menuItems, serverItems...)
+	menuItems = append(menuItems,
 		fyne.NewMenuItemSeparator(),
-		tm.proxyModeMenuItems[0], // 清除代理
-		tm.proxyModeMenuItems[1], // 系统代理
+		closeProxyMenuItem,
+		fyne.NewMenuItemSeparator(),
+		tm.proxyModeMenuItems[0],
+		tm.proxyModeMenuItems[1],
 		fyne.NewMenuItemSeparator(),
 		fyne.NewMenuItem("退出", func() {
 			tm.quit()
 		}),
 	)
 
-	// 设置托盘菜单
+	menu := fyne.NewMenu("SOCKS5 代理客户端", menuItems...)
 	desk.SetSystemTrayMenu(menu)
+
+	tm.serverMenuMu.Lock()
+	tm.lastMenuSnapshot = tm.menuSnapshotLocked()
+	tm.serverMenuMu.Unlock()
 }
 
-// RefreshProxyModeMenu 刷新系统代理模式菜单的选中状态（公共方法）
+// RefreshProxyModeMenu 刷新托盘菜单（代理模式与节点区）。
 func (tm *TrayManager) RefreshProxyModeMenu() {
-	tm.refreshProxyModeMenu()
+	tm.RefreshTrayMenu()
 }
 
 // updateProxyModeMenuCheckedState 从 AppState（ConfigService）读取系统代理模式，更新菜单选中状态。
@@ -128,67 +393,31 @@ func (tm *TrayManager) updateProxyModeMenuCheckedState() {
 	}
 	currentMode := getSystemProxyModeFromAppState(tm.appState)
 
-	// 更新菜单项的选中状态
 	for i, item := range tm.proxyModeMenuItems {
 		if item == nil {
 			continue
 		}
 		switch i {
-		case 0: // 清除代理
+		case 0:
 			item.Checked = (currentMode == SystemProxyModeClear)
-		case 1: // 系统代理
+		case 1:
 			item.Checked = (currentMode == SystemProxyModeAuto)
-		}
-	}
-}
-
-// refreshProxyModeMenu 根据 AppState 当前状态刷新托盘代理模式菜单。
-func (tm *TrayManager) refreshProxyModeMenu() {
-	if tm.appState == nil || tm.appState.ConfigService == nil {
-		return
-	}
-	currentMode := getSystemProxyModeFromAppState(tm.appState)
-
-	// 检查是否有状态变化
-	needRefresh := false
-	for i, item := range tm.proxyModeMenuItems {
-		if item == nil {
-			continue
-		}
-		var shouldBeChecked bool
-		switch i {
-		case 0: // 清除代理
-			shouldBeChecked = (currentMode == SystemProxyModeClear)
-		case 1: // 系统代理
-			shouldBeChecked = (currentMode == SystemProxyModeAuto)
-		}
-		if item.Checked != shouldBeChecked {
-			needRefresh = true
-			break // 发现变化就退出循环
-		}
-	}
-
-	// 只有在状态变化时才刷新托盘菜单（需要重新设置菜单才能更新选中状态）
-	if needRefresh {
-		if desk, ok := tm.app.(desktop.App); ok {
-			tm.createTrayMenu(desk)
 		}
 	}
 }
 
 // quit 退出应用
 func (tm *TrayManager) quit() {
-	// 停止日志监控
+	tm.StopPingRefresh()
+
 	if tm.appState.LogsPanel != nil {
 		tm.appState.LogsPanel.Stop()
 	}
 
-	// 保存布局配置
 	if tm.appState.MainWindow != nil {
 		tm.appState.MainWindow.SaveLayoutConfig()
 	}
 
-	// 立即落库窗口尺寸（避免仅依赖防抖定时器未触发）
 	tm.appState.stopWindowSizeSaveTimer()
 	if tm.appState.Window != nil && tm.appState.Window.Canvas() != nil {
 		sz := tm.appState.Window.Canvas().Size()
@@ -197,6 +426,5 @@ func (tm *TrayManager) quit() {
 		}
 	}
 
-	// 退出应用
 	tm.app.Quit()
 }
