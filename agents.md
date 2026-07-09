@@ -161,7 +161,7 @@ set VERSION=1.0.0 && build.bat
 VERSION=1.0.0 ./build.sh
 ```
 
-构建输出: `dist/<OS>-<ARCH>/proxy-gui[.exe]`  
+构建输出: `dist/<OS>-<ARCH>/LProxy[.exe]`  
 构建目标: windows(amd64,386), linux(amd64,arm64), darwin(amd64,arm64)  
 构建参数: CGO_ENABLED=1, ldflags: -s -w -X main.version=$VERSION
 

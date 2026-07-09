@@ -12,9 +12,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"myproxy.com/p/internal/database"
-	"myproxy.com/p/internal/logging"
 	"myproxy.com/p/internal/model"
-	"myproxy.com/p/internal/service"
 )
 
 // NodePage 管理服务器列表的显示和操作。
@@ -62,13 +60,6 @@ func (np *NodePage) Cleanup() {
 	}
 	np.appState.Store.Nodes.NodesBinding.RemoveListener(np.listener)
 	np.listener = nil
-}
-
-// loadNodes 从 Store 加载节点（Store 已经维护了绑定，这里只是确保数据最新）
-func (np *NodePage) loadNodes() {
-	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
-		_ = np.appState.Store.Nodes.Load()
-	}
 }
 
 // // SetOnServerSelect 设置服务器选中时的回调函数。
@@ -208,11 +199,9 @@ func (np *NodePage) Build() fyne.CanvasObject {
 	return np.content
 }
 
-// Refresh 刷新节点列表的显示，使 UI 反映最新的节点数据。
+// Refresh 刷新节点列表的显示，使 UI 反映 Store 中最新节点数据。
 func (np *NodePage) Refresh() {
-	np.loadNodes()
-	np.updateSelectedServerLabel() // 更新选中服务器标签
-	// 绑定数据更新后会自动触发列表刷新，无需手动调用
+	np.updateSelectedServerLabel()
 	if np.list != nil {
 		np.list.Refresh()
 	}
@@ -568,70 +557,13 @@ func (np *NodePage) onStartProxy(id widget.ListItemID) {
 // 	np.saveConfigToDB()
 // }
 
-// StartProxyForSelected 启动当前选中服务器的代理。
-// 使用 XrayControlService 来处理代理启动逻辑
+// StartProxyForSelected 启动当前选中服务器的代理（委托 MainWindow 统一处理）。
 func (np *NodePage) StartProxyForSelected() {
-	if np.appState == nil {
-		np.logAndShowError("启动代理失败", fmt.Errorf("AppState 未初始化"))
+	if np.appState == nil || np.appState.MainWindow == nil {
+		np.logAndShowError("启动代理失败", fmt.Errorf("主窗口未初始化"))
 		return
 	}
-
-	if np.appState.XrayControlService == nil {
-		np.logAndShowError("启动代理失败", fmt.Errorf("XrayControlService 未初始化"))
-		return
-	}
-
-	// 使用统一的日志文件路径（与应用日志使用同一个文件）
-	unifiedLogPath := ""
-	if np.appState.Logger != nil {
-		unifiedLogPath = np.appState.Logger.GetLogFilePath()
-	}
-
-	// 调用 service 启动代理
-	result := np.appState.XrayControlService.StartProxy(np.appState.XrayInstance, unifiedLogPath)
-
-	if result.Error != nil {
-		np.logAndShowError("启动代理失败", result.Error)
-		np.appState.UpdateProxyStatus()
-		return
-	}
-
-	// 启动成功，更新 AppState 中的 XrayInstance
-	np.appState.XrayInstance = result.XrayInstance
-
-	// 更新 ProxyService 的 xray 实例引用
-	if np.appState.ProxyService != nil {
-		np.appState.ProxyService.UpdateXrayInstance(result.XrayInstance)
-	} else {
-		// 延迟初始化 ProxyService
-		np.appState.ProxyService = service.NewProxyService(result.XrayInstance, np.appState.ConfigService)
-	}
-
-	// 记录日志（统一日志记录）
-	if np.appState.Logger != nil && result.XrayInstance != nil {
-		selectedNode := np.appState.Store.Nodes.GetSelected()
-		if selectedNode != nil {
-			np.appState.Logger.InfoWithType(logging.LogTypeProxy, "xray-core代理已启动: %s (端口: %d)", selectedNode.Name, result.XrayInstance.GetPort())
-		}
-	}
-
-	np.Refresh()
-	// 更新状态绑定（使用双向绑定，UI 会自动更新）
-	np.appState.UpdateProxyStatus()
-
-	// 与主界面主开关按钮状态同步
-	if np.appState.MainWindow != nil {
-		np.appState.MainWindow.RefreshMainToggleButton()
-	}
-
-	// 显示成功对话框
-	if np.appState.Window != nil && result.XrayInstance != nil {
-		selectedNode := np.appState.Store.Nodes.GetSelected()
-		if selectedNode != nil {
-			message := fmt.Sprintf("代理已启动\n节点: %s\n端口: %d", selectedNode.Name, result.XrayInstance.GetPort())
-			dialog.ShowInformation("代理启动成功", message, np.appState.Window)
-		}
-	}
+	np.appState.MainWindow.startProxy()
 }
 
 // logAndShowError 记录日志并显示错误对话框（统一错误处理）
@@ -651,51 +583,13 @@ func (np *NodePage) saveConfigToDB() {
 	// 如果需要保存特定配置，应该通过 Store.AppConfig.Set() 方法
 }
 
-// onStopProxy 停止代理。
-// 使用 XrayControlService 来处理代理停止逻辑
+// onStopProxy 停止代理（委托 MainWindow 统一处理）。
 func (np *NodePage) onStopProxy() {
-	if np.appState == nil {
-		np.logAndShowError("停止代理失败", fmt.Errorf("AppState 未初始化"))
+	if np.appState == nil || np.appState.MainWindow == nil {
+		np.logAndShowError("停止代理失败", fmt.Errorf("主窗口未初始化"))
 		return
 	}
-
-	if np.appState.XrayControlService == nil {
-		np.logAndShowError("停止代理失败", fmt.Errorf("XrayControlService 未初始化"))
-		return
-	}
-
-	// 调用 service 停止代理
-	result := np.appState.XrayControlService.StopProxy(np.appState.XrayInstance)
-
-	if result.Error != nil {
-		np.logAndShowError("停止代理失败", result.Error)
-		return
-	}
-
-	// 停止成功，销毁实例（生命周期 = 代理运行生命周期）
-	np.appState.XrayInstance = nil
-
-	// 记录日志（统一日志记录）
-	if np.appState.Logger != nil {
-		np.appState.Logger.InfoWithType(logging.LogTypeProxy, "xray-core代理已停止")
-	}
-
-	// 更新状态绑定
-	np.appState.UpdateProxyStatus()
-
-	// 与主界面主开关按钮状态同步
-	if np.appState.MainWindow != nil {
-		np.appState.MainWindow.RefreshMainToggleButton()
-	}
-
-	// 显示成功对话框
-	if np.appState.Window != nil {
-		if result.LogMessage == "代理未运行" {
-			dialog.ShowInformation("提示", "代理未运行", np.appState.Window)
-		} else {
-			dialog.ShowInformation("代理停止成功", "代理已停止", np.appState.Window)
-		}
-	}
+	np.appState.MainWindow.StopProxy()
 }
 
 // StopProxy 对外暴露的"停止代理"接口，供主界面一键按钮等复用。
@@ -738,6 +632,7 @@ func (np *NodePage) onTestAll() {
 		// 统计结果并记录每个服务器的详细日志，同时更新延迟
 		successCount := 0
 		failCount := 0
+		successDelays := make(map[string]int)
 		for _, srv := range servers {
 			if srv == nil || !srv.Enabled {
 				continue
@@ -748,14 +643,7 @@ func (np *NodePage) onTestAll() {
 			}
 			if delay > 0 {
 				successCount++
-				// 通过 Store 更新服务器延迟（会自动更新数据库和绑定）
-				if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
-					if err := np.appState.Store.Nodes.UpdateDelay(srv.ID, delay); err != nil {
-						if np.appState != nil {
-							np.appState.AppendLog("ERROR", "ping", fmt.Sprintf("更新服务器 %s 延迟失败: %v", srv.Name, err))
-						}
-					}
-				}
+				successDelays[srv.ID] = delay
 				if np.appState != nil {
 					np.appState.AppendLog("INFO", "ping", fmt.Sprintf("服务器 %s (%s:%d) 测速完成: %d ms", srv.Name, srv.Addr, srv.Port, delay))
 				}
@@ -764,6 +652,11 @@ func (np *NodePage) onTestAll() {
 				if np.appState != nil {
 					np.appState.AppendLog("ERROR", "ping", fmt.Sprintf("服务器 %s (%s:%d) 测速失败", srv.Name, srv.Addr, srv.Port))
 				}
+			}
+		}
+		if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil && len(successDelays) > 0 {
+			if err := np.appState.Store.Nodes.UpdateDelays(successDelays); err != nil {
+				np.appState.AppendLog("ERROR", "ping", fmt.Sprintf("批量更新延迟失败: %v", err))
 			}
 		}
 

@@ -870,6 +870,38 @@ func UpdateServerDelay(id string, delay int) error {
 	return nil
 }
 
+// UpdateServerDelays 批量更新服务器延迟（单次事务，避免逐条更新）。
+func UpdateServerDelays(delays map[string]int) error {
+	if len(delays) == 0 {
+		return nil
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return fmt.Errorf("开始事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+	stmt, err := tx.Prepare("UPDATE servers SET delay = ?, updated_at = ? WHERE id = ?")
+	if err != nil {
+		return fmt.Errorf("准备语句失败: %w", err)
+	}
+	defer stmt.Close()
+
+	for id, delay := range delays {
+		if id == "" || delay <= 0 {
+			continue
+		}
+		if _, err := stmt.Exec(delay, now, id); err != nil {
+			return fmt.Errorf("更新服务器 %s 延迟失败: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交延迟更新事务失败: %w", err)
+	}
+	return nil
+}
+
 // SelectServer 选中指定的服务器（取消其他服务器的选中状态）。
 // 参数：
 //   - id: 要选中的服务器 ID

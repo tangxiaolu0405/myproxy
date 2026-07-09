@@ -153,10 +153,30 @@ func (ns *NodesStore) Select(id string) error {
 	if err := database.SelectServer(id); err != nil {
 		return fmt.Errorf("节点存储: 选中节点失败: %w", err)
 	}
+	if !ns.applySelectionInMemory(id) {
+		return ns.Load()
+	}
+	return nil
+}
+
+// applySelectionInMemory 在内存中更新选中状态；节点不存在时返回 false。
+func (ns *NodesStore) applySelectionInMemory(id string) bool {
 	ns.mu.Lock()
+	found := false
+	for _, node := range ns.nodes {
+		if node.ID == id {
+			found = true
+		}
+		node.Selected = (node.ID == id)
+	}
+	if !found {
+		ns.mu.Unlock()
+		return false
+	}
 	ns.selectedServerID = id
 	ns.mu.Unlock()
-	return ns.Load()
+	ns.updateBinding()
+	return true
 }
 
 // SelectServer 选中指定服务器并同步到 AppConfig（应用层与列表页一致，供托盘/自动启动等使用）。
@@ -174,7 +194,66 @@ func (ns *NodesStore) UpdateDelay(id string, delay int) error {
 	if err := database.UpdateServerDelay(id, delay); err != nil {
 		return fmt.Errorf("节点存储: 更新节点延迟失败: %w", err)
 	}
-	return ns.Load()
+	if !ns.applyDelayInMemory(id, delay) {
+		return ns.Load()
+	}
+	return nil
+}
+
+// applyDelayInMemory 在内存中更新单个节点延迟；节点不存在时返回 false。
+func (ns *NodesStore) applyDelayInMemory(id string, delay int) bool {
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	for _, node := range ns.nodes {
+		if node.ID == id {
+			node.Delay = delay
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateDelays 批量更新节点延迟；优先内存 patch，节点不全在缓存时 fallback 一次 Load。
+func (ns *NodesStore) UpdateDelays(delays map[string]int) error {
+	if len(delays) == 0 {
+		return nil
+	}
+	positive := make(map[string]int, len(delays))
+	for id, delay := range delays {
+		if delay > 0 {
+			positive[id] = delay
+		}
+	}
+	if len(positive) == 0 {
+		return nil
+	}
+	if err := database.UpdateServerDelays(positive); err != nil {
+		return fmt.Errorf("节点存储: 批量更新节点延迟失败: %w", err)
+	}
+	if !ns.applyDelaysInMemory(positive) {
+		return ns.Load()
+	}
+	return nil
+}
+
+// applyDelaysInMemory 在内存中批量更新延迟；任一 id 不在缓存中则返回 false。
+func (ns *NodesStore) applyDelaysInMemory(delays map[string]int) bool {
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	for id, delay := range delays {
+		found := false
+		for _, node := range ns.nodes {
+			if node.ID == id {
+				node.Delay = delay
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func (ns *NodesStore) Delete(id string) error {

@@ -87,9 +87,21 @@ func (tm *TrayManager) RefreshTrayIcon() {
 // StartPingRefresh 启动托盘节点测速与 Top5 刷新（首次立即执行，之后每 10 秒）。
 func (tm *TrayManager) StartPingRefresh() {
 	tm.StopPingRefresh()
-	tm.pingStop = make(chan struct{})
-	tm.pingTicker = time.NewTicker(trayPingRefreshInterval)
-	go tm.pingRefreshLoop()
+	stop := make(chan struct{})
+	ticker := time.NewTicker(trayPingRefreshInterval)
+	tm.pingStop = stop
+	tm.pingTicker = ticker
+	go func() {
+		tm.runPingCycle()
+		for {
+			select {
+			case <-ticker.C:
+				tm.runPingCycle()
+			case <-stop:
+				return
+			}
+		}
+	}()
 }
 
 // StopPingRefresh 停止托盘节点测速定时器。
@@ -101,18 +113,6 @@ func (tm *TrayManager) StopPingRefresh() {
 	if tm.pingTicker != nil {
 		tm.pingTicker.Stop()
 		tm.pingTicker = nil
-	}
-}
-
-func (tm *TrayManager) pingRefreshLoop() {
-	tm.runPingCycle()
-	for {
-		select {
-		case <-tm.pingTicker.C:
-			tm.runPingCycle()
-		case <-tm.pingStop:
-			return
-		}
 	}
 }
 
@@ -138,7 +138,7 @@ func (tm *TrayManager) runPingCycle() {
 	servers := tm.enabledServersFromList()
 	if len(servers) == 0 {
 		fyne.Do(func() {
-			tm.applyPingResults(nil)
+			tm.applyPingResults(nil, nil)
 		})
 		return
 	}
@@ -146,15 +146,11 @@ func (tm *TrayManager) runPingCycle() {
 	results := tm.appState.Ping.TestAllServersDelay(servers)
 
 	if tm.appState.Store != nil && tm.appState.Store.Nodes != nil {
-		for id, delay := range results {
-			if delay > 0 {
-				_ = tm.appState.Store.Nodes.UpdateDelay(id, delay)
-			}
-		}
+		_ = tm.appState.Store.Nodes.UpdateDelays(results)
 	}
 
 	fyne.Do(func() {
-		tm.applyPingResults(results)
+		tm.applyPingResults(results, servers)
 	})
 }
 
@@ -172,7 +168,7 @@ func (tm *TrayManager) enabledServersFromList() []model.Node {
 	return enabled
 }
 
-func (tm *TrayManager) applyPingResults(delays map[string]int) {
+func (tm *TrayManager) applyPingResults(delays map[string]int, servers []model.Node) {
 	currentID := ""
 	if tm.appState != nil && tm.appState.Store != nil && tm.appState.Store.Nodes != nil {
 		currentID = tm.appState.Store.Nodes.GetSelectedID()
@@ -180,9 +176,11 @@ func (tm *TrayManager) applyPingResults(delays map[string]int) {
 
 	tm.syncCurrentNodeFromAppState(delays)
 
-	servers := tm.enabledServersFromList()
+	if servers == nil {
+		servers = tm.enabledServersFromList()
+	}
 	if delays == nil {
-		delays = make(map[string]int)
+		delays = make(map[string]int, len(servers))
 		for _, s := range servers {
 			if s.Delay > 0 {
 				delays[s.ID] = s.Delay
@@ -318,10 +316,7 @@ func (tm *TrayManager) onAlternativeSelected(id string) {
 		if tm.appState.SafeLogger != nil {
 			tm.appState.SafeLogger.Warn(fmt.Sprintf("托盘切换节点失败: %v", err))
 		}
-		return
 	}
-	tm.syncCurrentNodeFromAppState(nil)
-	tm.refreshTrayMenuIfNeeded()
 }
 
 // createTrayMenu 创建托盘菜单

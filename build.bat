@@ -5,7 +5,7 @@ REM 支持 Windows, Linux, Mac 交叉编译
 setlocal enabledelayedexpansion
 
 REM 项目配置
-set PROJECT_NAME=proxy-gui
+set PROJECT_NAME=LProxy
 set VERSION=%VERSION%
 if "%VERSION%"=="" set VERSION=%date:~0,4%%date:~5,2%%date:~8,2%-%time:~0,2%%time:~3,2%%time:~6,2%
 set VERSION=%VERSION: =0%

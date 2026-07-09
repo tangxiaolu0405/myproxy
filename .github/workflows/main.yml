@@ -57,8 +57,8 @@ jobs:
       # fyne-cross 镜像内 Go 可能低于 go.mod；GOTOOLCHAIN=auto 在容器内按需使用已缓存的工具链
       - name: Build for Windows and Linux
         run: |
-          fyne-cross windows -app-id com.lucastq.myproxy -output proxy-gui -env GOTOOLCHAIN=auto ./cmd/gui
-          fyne-cross linux -app-id com.lucastq.myproxy -output proxy-gui -env GOTOOLCHAIN=auto ./cmd/gui
+          fyne-cross windows -app-id com.lucastq.myproxy -output LProxy -env GOTOOLCHAIN=auto ./cmd/gui
+          fyne-cross linux -app-id com.lucastq.myproxy -output LProxy -env GOTOOLCHAIN=auto ./cmd/gui
 
       - name: Upload build artifacts (Windows, Linux)
         uses: actions/upload-artifact@v4

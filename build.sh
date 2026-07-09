@@ -6,7 +6,7 @@
 set -e
 
 # 项目配置
-PROJECT_NAME="proxy-gui"
+PROJECT_NAME="LProxy"
 VERSION="${VERSION:-$(date +%Y%m%d-%H%M%S)}"
 BUILD_DIR="dist"
 MAIN_PATH="./cmd/gui/main.go"

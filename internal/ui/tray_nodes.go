@@ -18,7 +18,7 @@ type trayNodeEntry struct {
 func pickTopAlternatives(servers []model.Node, delays map[string]int, currentID string, n int) []trayNodeEntry {
 	candidates := make([]trayNodeEntry, 0, len(servers))
 	for _, s := range servers {
-		if !s.Enabled || s.ID == currentID {
+		if s.ID == currentID {
 			continue
 		}
 		delay, ok := delays[s.ID]
