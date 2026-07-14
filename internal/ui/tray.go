@@ -287,7 +287,15 @@ func (tm *TrayManager) buildServerMenuItems() []*fyne.MenuItem {
 
 	items := make([]*fyne.MenuItem, 0, len(alts)+3)
 
-	currentItem := fyne.NewMenuItem(currentLabel, nil)
+	// 未运行：点击当前节点即可启动；运行中：仅展示勾选，不再次重启。
+	var currentAction func()
+	if currentID == "" {
+		currentAction = tm.showMainWindow
+	} else if !running {
+		id := currentID
+		currentAction = func() { tm.onNodeSelected(id) }
+	}
+	currentItem := fyne.NewMenuItem(currentLabel, currentAction)
 	if running && currentID != "" {
 		currentItem.Checked = true
 	}
@@ -302,20 +310,31 @@ func (tm *TrayManager) buildServerMenuItems() []*fyne.MenuItem {
 		entry := alt
 		label := fmt.Sprintf("%s (%dms)", entry.name, entry.delay)
 		items = append(items, fyne.NewMenuItem(label, func() {
-			tm.onAlternativeSelected(entry.id)
+			tm.onNodeSelected(entry.id)
 		}))
 	}
 	return items
 }
 
-func (tm *TrayManager) onAlternativeSelected(id string) {
+// showMainWindow 显示并聚焦主窗口（托盘启动失败或未选中节点时使用）。
+func (tm *TrayManager) showMainWindow() {
+	if tm.window == nil {
+		return
+	}
+	tm.window.Show()
+	tm.window.RequestFocus()
+}
+
+// onNodeSelected 托盘选中节点：未运行则启动，已运行则切换重连；失败时弹出主窗口。
+func (tm *TrayManager) onNodeSelected(id string) {
 	if tm.appState == nil || tm.appState.MainWindow == nil {
 		return
 	}
 	if err := tm.appState.MainWindow.SwitchToServer(id); err != nil {
 		if tm.appState.SafeLogger != nil {
-			tm.appState.SafeLogger.Warn(fmt.Sprintf("托盘切换节点失败: %v", err))
+			tm.appState.SafeLogger.Warn(fmt.Sprintf("托盘启动/切换节点失败: %v", err))
 		}
+		tm.showMainWindow()
 	}
 }
 

@@ -874,19 +874,22 @@ func truncateDisplayText(text string, maxRunes int) string {
 // startProxy 启动代理（使用当前选中的节点）
 // 使用 XrayControlService 来处理代理启动逻辑
 func (mw *MainWindow) startProxy() {
-	mw.startProxyInternal(true)
+	_ = mw.startProxyInternal(true)
 }
 
 // startProxyInternal 启动代理；showSuccessDialog 为 false 时不弹出成功对话框（托盘切换等场景）。
-func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) {
+// 系统代理模式与主窗口主开关一致：不强制 Auto，仅在已保存为「系统」且需同步终端/Git 时复用套用逻辑。
+func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) error {
 	if mw.appState == nil {
-		mw.logAndShowError("启动代理失败", fmt.Errorf("AppState 未初始化"))
-		return
+		err := fmt.Errorf("AppState 未初始化")
+		mw.logAndShowError("启动代理失败", err)
+		return err
 	}
 
 	if mw.appState.XrayControlService == nil {
-		mw.logAndShowError("启动代理失败", fmt.Errorf("XrayControlService 未初始化"))
-		return
+		err := fmt.Errorf("XrayControlService 未初始化")
+		mw.logAndShowError("启动代理失败", err)
+		return err
 	}
 
 	// 使用统一的日志文件路径（与应用日志使用同一个文件）
@@ -903,7 +906,7 @@ func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) {
 		if mw.appState != nil {
 			mw.appState.UpdateProxyStatus()
 		}
-		return
+		return result.Error
 	}
 
 	// 启动成功，更新 AppState 中的 XrayInstance
@@ -953,9 +956,11 @@ func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) {
 			dialog.ShowInformation("代理启动成功", message, mw.appState.Window)
 		}
 	}
+	return nil
 }
 
-// SwitchToServer 选中节点；若代理已在运行则切换并重连。
+// SwitchToServer 选中节点并启动/重连代理（托盘入口：未运行则启动，已运行则切换重连）。
+// 系统代理不强制 Auto，与主窗口启动路径一致。
 func (mw *MainWindow) SwitchToServer(id string) error {
 	if mw.appState == nil || mw.appState.Store == nil {
 		return fmt.Errorf("主窗口: AppState 未初始化")
@@ -964,19 +969,13 @@ func (mw *MainWindow) SwitchToServer(id string) error {
 		return fmt.Errorf("主窗口: 选中节点失败: %w", err)
 	}
 
-	isRunning := mw.appState.XrayInstance != nil && mw.appState.XrayInstance.IsRunning()
-	if isRunning {
-		if !mw.proxyOpMu.TryLock() {
-			return fmt.Errorf("主窗口: 代理操作正在进行中")
-		}
-		defer mw.proxyOpMu.Unlock()
-		mw.startProxyInternal(false)
-		return nil
+	if !mw.proxyOpMu.TryLock() {
+		return fmt.Errorf("主窗口: 代理操作正在进行中")
 	}
+	defer mw.proxyOpMu.Unlock()
 
-	mw.appState.UpdateProxyStatus()
-	if mw.nodePageInstance != nil {
-		mw.nodePageInstance.Refresh()
+	if err := mw.startProxyInternal(false); err != nil {
+		return err
 	}
 	mw.updateHomeServerNameLabel()
 	return nil
@@ -1110,12 +1109,15 @@ func (mw *MainWindow) RefreshMainToggleButton() {
 	mw.updateMainToggleButton()
 }
 
-// logAndShowError 记录日志并显示错误（统一错误处理）
+// logAndShowError 记录日志并显示错误（统一错误处理）。
+// 托盘等场景下窗口可能已隐藏：先 Show 再弹对话框，确保用户能看到错误。
 func (mw *MainWindow) logAndShowError(message string, err error) {
 	if mw.appState != nil && mw.appState.Logger != nil {
 		mw.appState.Logger.Error("%s: %v", message, err)
 	}
 	if mw.appState != nil && mw.appState.Window != nil {
+		mw.appState.Window.Show()
+		mw.appState.Window.RequestFocus()
 		errorMsg := fmt.Errorf("%s: %w", message, err)
 		dialog.ShowError(errorMsg, mw.appState.Window)
 	}
