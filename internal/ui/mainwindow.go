@@ -878,7 +878,7 @@ func (mw *MainWindow) startProxy() {
 }
 
 // startProxyInternal 启动代理；showSuccessDialog 为 false 时不弹出成功对话框（托盘切换等场景）。
-// 系统代理模式与主窗口主开关一致：不强制 Auto，仅在已保存为「系统」且需同步终端/Git 时复用套用逻辑。
+// 若配置已是「系统」模式，启动成功后重新套用系统代理（不写回 Store）。
 func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) error {
 	if mw.appState == nil {
 		err := fmt.Errorf("AppState 未初始化")
@@ -941,10 +941,10 @@ func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) error {
 		mw.nodePageInstance.Refresh()
 	}
 
-	// 入站端口就绪后同步系统代理、终端环境变量与 Git 全局代理（不写回 Store）；后两者仅在与「系统」模式同时勾选时写入
+	// 入站端口就绪后，若当前配置为「系统」则重新套用（含终端/Git，由其各自开关决定），不写回 Store。
 	if mw.appState.ConfigService != nil {
 		persisted := ParseSystemProxyMode(mw.appState.ConfigService.GetSystemProxyMode())
-		if persisted == SystemProxyModeAuto && (mw.appState.ConfigService.GetTerminalProxyEnabled() || mw.appState.ConfigService.GetGitProxyEnabled()) {
+		if persisted == SystemProxyModeAuto {
 			_ = mw.applySystemProxyModeCore(SystemProxyModeAuto, false)
 		}
 	}
@@ -960,24 +960,55 @@ func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) error {
 }
 
 // SwitchToServer 选中节点并启动/重连代理（托盘入口：未运行则启动，已运行则切换重连）。
-// 系统代理不强制 Auto，与主窗口启动路径一致。
+// 启动成功后：若系统代理未开启则自动开启；任一步失败会弹主窗口并显示错误。
 func (mw *MainWindow) SwitchToServer(id string) error {
 	if mw.appState == nil || mw.appState.Store == nil {
 		return fmt.Errorf("主窗口: AppState 未初始化")
 	}
 	if err := mw.appState.Store.SelectServer(id); err != nil {
+		mw.logAndShowError("选中节点失败", err)
 		return fmt.Errorf("主窗口: 选中节点失败: %w", err)
 	}
 
 	if !mw.proxyOpMu.TryLock() {
-		return fmt.Errorf("主窗口: 代理操作正在进行中")
+		err := fmt.Errorf("主窗口: 代理操作正在进行中")
+		mw.logAndShowError("切换节点失败", err)
+		return err
 	}
 	defer mw.proxyOpMu.Unlock()
 
 	if err := mw.startProxyInternal(false); err != nil {
+		// startProxyInternal 内已 logAndShowError（含弹窗）
 		return err
 	}
 	mw.updateHomeServerNameLabel()
+
+	if err := mw.ensureSystemProxyEnabledLocked(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureSystemProxyEnabledLocked 若当前未开启系统代理则开启并写回配置。
+// 调用方须已持有 proxyOpMu（勿再走 SetSystemProxyMode，其 goroutine 会 TryLock 失败被跳过）。
+// 失败时弹主窗口并显示错误。
+func (mw *MainWindow) ensureSystemProxyEnabledLocked() error {
+	if mw.appState != nil && mw.appState.ConfigService != nil {
+		if ParseSystemProxyMode(mw.appState.ConfigService.GetSystemProxyMode()) == SystemProxyModeAuto {
+			return nil
+		}
+	}
+
+	mw.updateProxyModeButtonsState(SystemProxyModeAuto)
+	if err := mw.applySystemProxyModeCore(SystemProxyModeAuto, true); err != nil {
+		mw.logAndShowError("开启系统代理失败", err)
+		return err
+	}
+	if mw.appState != nil {
+		fyne.Do(func() {
+			mw.appState.refreshTrayProxyMenu()
+		})
+	}
 	return nil
 }
 
@@ -1098,7 +1129,7 @@ func (mw *MainWindow) RestartXrayIfRunningForInboundListenChange() {
 	}
 	if mw.appState.ConfigService != nil {
 		persisted := ParseSystemProxyMode(mw.appState.ConfigService.GetSystemProxyMode())
-		if persisted == SystemProxyModeAuto && (mw.appState.ConfigService.GetTerminalProxyEnabled() || mw.appState.ConfigService.GetGitProxyEnabled()) {
+		if persisted == SystemProxyModeAuto {
 			_ = mw.applySystemProxyModeCore(SystemProxyModeAuto, false)
 		}
 	}

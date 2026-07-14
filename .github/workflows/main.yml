@@ -54,44 +54,56 @@ jobs:
           prime fyneio/fyne-cross-images:windows
           prime fyneio/fyne-cross-images:linux
 
-      # fyne-cross 镜像内 Go 可能低于 go.mod；GOTOOLCHAIN=auto 在容器内按需使用已缓存的工具链
+      # fyne-cross 镜像内 Go 可能低于 go.mod；GOTOOLCHAIN=auto 在容器内按需使用已缓存的工具链。
+      # 显式 -arch amd64，避免随 runner GOARCH 漂移；产物目录为 fyne-cross/dist/<os>-<arch>/
       - name: Build for Windows and Linux
         run: |
-          fyne-cross windows -app-id com.lucastq.myproxy -output LProxy -env GOTOOLCHAIN=auto ./cmd/gui
-          fyne-cross linux -app-id com.lucastq.myproxy -output LProxy -env GOTOOLCHAIN=auto ./cmd/gui
+          fyne-cross windows -arch amd64 -app-id com.lucastq.myproxy -output LProxy -env GOTOOLCHAIN=auto ./cmd/gui
+          fyne-cross linux -arch amd64 -app-id com.lucastq.myproxy -output LProxy -env GOTOOLCHAIN=auto ./cmd/gui
 
       - name: Normalize release assets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          # fyne-cross 常见输出：
-          #   fyne-cross/dist/windows-amd64/LProxy.exe.zip
+          # fyne-cross 输出（-output LProxy）：
+          #   fyne-cross/dist/windows-amd64/LProxy.zip
           #   fyne-cross/dist/linux-amd64/LProxy.tar.xz
-          # 归一为：LProxy-<os>-<arch>.zip / LProxy-<os>-<arch>.tar.xz
+          # 归一命名对齐 cata：LProxy-<os>-<arch>.<ext>
           shopt -s nullglob
-          copy_normalized() {
-            local f="$1"
-            [ -f "$f" ] || return 0
-            local dir base ext out
-            dir=$(basename "$(dirname "$f")")
-            base=$(basename "$f")
-            case "$base" in
+          pack_platform() {
+            local os="$1" arch="$2"
+            local dir="fyne-cross/dist/${os}-${arch}"
+            local f out ext
+            if [ ! -d "$dir" ]; then
+              echo "missing dist dir: $dir" >&2
+              return 1
+            fi
+            f=""
+            for cand in "$dir"/*.zip "$dir"/*.tar.xz "$dir"/*.tar.gz; do
+              [ -f "$cand" ] || continue
+              f="$cand"
+              break
+            done
+            if [ -z "$f" ]; then
+              echo "no archive under $dir:" >&2
+              ls -la "$dir" >&2 || true
+              return 1
+            fi
+            case "$f" in
               *.tar.xz) ext="tar.xz" ;;
               *.tar.gz) ext="tar.gz" ;;
               *.zip)    ext="zip" ;;
-              *)        ext="${base##*.}" ;;
+              *) echo "unsupported archive: $f" >&2; return 1 ;;
             esac
-            out="release-assets/LProxy-${dir}.${ext}"
+            out="release-assets/LProxy-${os}-${arch}.${ext}"
             cp -f "$f" "$out"
             echo "asset: $out (from $f)"
           }
-          for f in fyne-cross/dist/windows-*/* fyne-cross/dist/linux-*/*; do
-            copy_normalized "$f"
-          done
+          pack_platform windows amd64
+          pack_platform linux amd64
           echo "---- release assets ----"
           ls -la release-assets
-          test "$(find release-assets -type f | wc -l)" -gt 0
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -162,14 +174,21 @@ jobs:
             echo
             echo "## Downloads"
             echo
-            echo "- Windows: \`LProxy-windows-amd64.zip\`"
-            echo "- Linux: \`LProxy-linux-amd64.tar.xz\`"
+            while IFS= read -r f; do
+              printf -- '- `%s`\n' "$(basename "$f")"
+            done < <(find artifacts -type f | sort)
+            echo
             echo "- macOS: 暂未由 CI 发布（见 workflow 注释）"
             echo
             echo '```bash'
-            echo "# Linux"
-            echo "tar -xJf LProxy-linux-amd64.tar.xz && ./LProxy"
-            echo "# Windows：解压 LProxy-windows-amd64.zip 后运行 LProxy.exe"
+            if [ -f artifacts/LProxy-linux-amd64.tar.xz ]; then
+              echo "tar -xJf LProxy-linux-amd64.tar.xz   # 解压后运行包内二进制"
+            elif [ -f artifacts/LProxy-linux-amd64.tar.gz ]; then
+              echo "tar -xzf LProxy-linux-amd64.tar.gz   # 解压后运行包内二进制"
+            fi
+            if [ -f artifacts/LProxy-windows-amd64.zip ]; then
+              echo "unzip LProxy-windows-amd64.zip && LProxy.exe"
+            fi
             echo '```'
           } > release_notes.md
 
@@ -184,6 +203,7 @@ jobs:
         with:
           body_path: release_notes.md
           files: |
-            artifacts/**/*
+            artifacts/LProxy-windows-amd64.*
+            artifacts/LProxy-linux-amd64.*
           draft: false
           prerelease: false
