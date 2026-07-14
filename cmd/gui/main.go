@@ -10,9 +10,6 @@ import (
 	"myproxy.com/p/internal/ui"
 )
 
-// version 由构建时 -ldflags "-X main.version=..." 注入；本地直接运行默认为 dev。
-var version = "dev"
-
 func main() {
 	if err := initDatabase(); err != nil {
 		log.Fatalf("初始化数据库失败: %v", err)
