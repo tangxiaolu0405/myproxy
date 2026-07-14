@@ -326,7 +326,8 @@ type MainWindow struct {
 	subscriptionPage         fyne.CanvasObject // 订阅管理页面
 	subscriptionPageInstance *SubscriptionPage // 订阅管理页面实例
 
-	homeLogoIcon *widget.Icon // 主页logo图标，用于主题变化时更新
+	homeLogoIcon  *widget.Icon  // 主页logo图标，用于主题变化时更新
+	homePortLabel *widget.Label // 主页底栏：本地入站端口
 
 	// 主界面状态UI组件
 	mainToggleButton *CircularButton          // 主开关按钮（连接/断开，圆形，替代了状态显示）
@@ -605,7 +606,7 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 		trafficArea,
 	)
 
-	// 顶部标题栏：左侧logo，右侧设置入口
+	// 顶部标题栏：左侧 logo，右侧订阅与设置
 	logoResource := createHomeLogo(mw.appState)
 	mw.homeLogoIcon = widget.NewIcon(logoResource)
 	if mw.homeLogoIcon != nil {
@@ -624,9 +625,17 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	)
 	headerBar := newPaddedWithSize(headerButtons, pad)
 
+	// 底部：仅展示本地入站端口（未运行也显示配置端口）
+	if mw.homePortLabel == nil {
+		mw.homePortLabel = widget.NewLabel("")
+		mw.homePortLabel.Alignment = fyne.TextAlignCenter
+	}
+	mw.updateHomePortLabel()
+	footerBar := newPaddedWithSize(mw.homePortLabel, pad)
+
 	return container.NewBorder(
 		headerBar,
-		nil, // 底部预留少量空白
+		footerBar,
 		nil,
 		nil,
 		container.NewCenter(content),
@@ -852,6 +861,14 @@ func (mw *MainWindow) updateHomeServerNameLabel() {
 	}
 
 	mw.serverNameLabel.SetText(truncateDisplayText(name, 25))
+}
+
+// updateHomePortLabel 更新主页底栏端口（未运行也显示配置端口）。
+func (mw *MainWindow) updateHomePortLabel() {
+	if mw == nil || mw.appState == nil || mw.homePortLabel == nil {
+		return
+	}
+	mw.homePortLabel.SetText(fmt.Sprintf("端口 %d", mw.appState.EffectiveLocalInboundPort()))
 }
 
 // truncateDisplayText 将文本截断到指定 rune 数，并在末尾追加省略号。

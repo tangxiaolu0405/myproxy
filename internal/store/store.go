@@ -629,28 +629,27 @@ func NewProxyStatusStore() *ProxyStatusStore {
 func (ps *ProxyStatusStore) UpdateProxyStatus(xrayInstance interface {
 	IsRunning() bool
 	GetPort() int
-}, nodesStore *NodesStore) {
+}, nodesStore *NodesStore, configuredPort int) {
 	isRunning := false
-	proxyPort := 0
+	proxyPort := configuredPort
+	if proxyPort <= 0 {
+		proxyPort = database.DefaultMixedInboundPort
+	}
 	if xrayInstance != nil {
 		v := reflect.ValueOf(xrayInstance)
 		if v.Kind() == reflect.Ptr && v.IsNil() {
 			isRunning = false
-			proxyPort = 0
 		} else {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
 						isRunning = false
-						proxyPort = 0
 					}
 				}()
 				if xrayInstance.IsRunning() {
 					isRunning = true
 					if xrayInstance.GetPort() > 0 {
 						proxyPort = xrayInstance.GetPort()
-					} else {
-						proxyPort = database.DefaultMixedInboundPort
 					}
 				}
 			}()
@@ -658,13 +657,13 @@ func (ps *ProxyStatusStore) UpdateProxyStatus(xrayInstance interface {
 	}
 	if isRunning {
 		ps.ProxyStatusBinding.Set("当前连接状态: 🟢 已连接")
-		if proxyPort > 0 {
-			ps.PortBinding.Set(fmt.Sprintf("监听端口: %d", proxyPort))
-		} else {
-			ps.PortBinding.Set("监听端口: -")
-		}
 	} else {
 		ps.ProxyStatusBinding.Set("当前连接状态: ⚪ 未连接")
+	}
+	// 未运行也展示配置端口，便于确认本地入站口
+	if proxyPort > 0 {
+		ps.PortBinding.Set(fmt.Sprintf("监听端口: %d", proxyPort))
+	} else {
 		ps.PortBinding.Set("监听端口: -")
 	}
 	if nodesStore != nil {

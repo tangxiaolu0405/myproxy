@@ -56,10 +56,35 @@ jobs:
 
       # fyne-cross 镜像内 Go 可能低于 go.mod；GOTOOLCHAIN=auto 在容器内按需使用已缓存的工具链。
       # 显式 -arch amd64，避免随 runner GOARCH 漂移；产物目录为 fyne-cross/dist/<os>-<arch>/
-      - name: Build for Windows and Linux
+      - name: Resolve app version
+        id: ver
+        shell: bash
         run: |
-          fyne-cross windows -arch amd64 -app-id com.lucastq.myproxy -output LProxy -env GOTOOLCHAIN=auto ./cmd/gui
-          fyne-cross linux -arch amd64 -app-id com.lucastq.myproxy -output LProxy -env GOTOOLCHAIN=auto ./cmd/gui
+          set -euo pipefail
+          # 发版（v* tag）用完整 tag 名作为版本；非发版构建固定为 dev，避免展示短 hash 误导
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ver="${GITHUB_REF_NAME}"
+          else
+            ver="dev"
+          fi
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          echo "Resolved APP_VERSION=${ver}"
+
+      - name: Build for Windows and Linux
+        env:
+          APP_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          echo "Building with main.version=${APP_VERSION}"
+          # fyne-cross 会按空格拆分 -ldflags；使用 -X=name=value 单 token，避免拆坏
+          fyne-cross windows -arch amd64 -app-id com.lucastq.myproxy -output LProxy \
+            -ldflags "-X=main.version=${APP_VERSION}" -env GOTOOLCHAIN=auto ./cmd/gui
+          fyne-cross linux -arch amd64 -app-id com.lucastq.myproxy -output LProxy \
+            -ldflags "-X=main.version=${APP_VERSION}" -env GOTOOLCHAIN=auto ./cmd/gui
+          # 校验二进制是否已注入版本（Windows 产物为 zip 时跳过；Linux 可从 bin 校验）
+          if [ -f "fyne-cross/bin/linux-amd64/LProxy" ]; then
+            strings "fyne-cross/bin/linux-amd64/LProxy" | grep -F "${APP_VERSION}" \
+              || echo "WARN: version string ${APP_VERSION} not found in linux binary (check -ldflags)"
+          fi
 
       - name: Normalize release assets
         shell: bash

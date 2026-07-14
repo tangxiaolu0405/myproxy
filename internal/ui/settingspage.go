@@ -770,7 +770,11 @@ func collectLabelsFromObject(obj fyne.CanvasObject) []*widget.Label {
 func (sp *SettingsPage) buildAboutContent() fyne.CanvasObject {
 	titleLabel := widget.NewLabelWithStyle("关于", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	versionLabel := widget.NewLabel("myproxy")
+	versionText := "版本 vdev"
+	if sp.appState != nil {
+		versionText = "版本 " + sp.appState.AppVersionDisplay()
+	}
+	versionLabel := widget.NewLabel(versionText)
 	versionLabel.Wrapping = fyne.TextWrapWord
 
 	descLabel := widget.NewLabel("基于 Xray-core 与 Fyne 的桌面代理管理工具。")

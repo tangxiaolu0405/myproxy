@@ -23,6 +23,7 @@ import (
 
 type AppState struct {
 	initialized         bool
+	AppVersion          string // 应用版本（构建注入；开发默认 dev）
 	Ping                *utils.Ping
 	Logger              *logging.Logger
 	SafeLogger          *logging.SafeLogger
@@ -52,7 +53,8 @@ type AppState struct {
 	windowSizeSaveTimer *time.Timer
 }
 
-func NewAppState() *AppState {
+// NewAppState 创建应用状态。appVersion 可为构建注入的版本号，空则视为 "dev"。
+func NewAppState(appVersion string) *AppState {
 	subscriptionManager := subscription.NewSubscriptionManager()
 	dataStore := store.NewStore(subscriptionManager)
 	serverService := service.NewServerService(dataStore)
@@ -60,7 +62,12 @@ func NewAppState() *AppState {
 	subscriptionService := service.NewSubscriptionService(dataStore, subscriptionManager)
 	pingUtil := utils.NewPing()
 
+	if strings.TrimSpace(appVersion) == "" {
+		appVersion = "dev"
+	}
+
 	appState := &AppState{
+		AppVersion:          appVersion,
 		Ping:                pingUtil,
 		Logger:              nil,
 		SafeLogger:          logging.NewSafeLogger(nil),
@@ -83,16 +90,44 @@ func NewAppState() *AppState {
 	return appState
 }
 
+// AppVersionDisplay 返回带 v 前缀的版本展示文案（已有 v/V 前缀则不重复添加）。
+func (a *AppState) AppVersionDisplay() string {
+	v := "dev"
+	if a != nil && strings.TrimSpace(a.AppVersion) != "" {
+		v = strings.TrimSpace(a.AppVersion)
+	}
+	if strings.HasPrefix(v, "v") || strings.HasPrefix(v, "V") {
+		return v
+	}
+	return "v" + v
+}
+
+// EffectiveLocalInboundPort 返回当前应展示的本地入站端口：运行中以 xray 为准，否则用配置端口。
+func (a *AppState) EffectiveLocalInboundPort() int {
+	if a != nil && a.XrayInstance != nil && a.XrayInstance.IsRunning() {
+		if p := a.XrayInstance.GetPort(); p > 0 {
+			return p
+		}
+	}
+	if a != nil && a.ConfigService != nil {
+		return a.ConfigService.GetLocalInboundPort()
+	}
+	return database.DefaultMixedInboundPort
+}
+
 func (a *AppState) updateStatusBindings() {
 	if a.Store == nil || a.Store.ProxyStatus == nil {
 		return
 	}
-	a.Store.ProxyStatus.UpdateProxyStatus(a.XrayInstance, a.Store.Nodes)
+	a.Store.ProxyStatus.UpdateProxyStatus(a.XrayInstance, a.Store.Nodes, a.EffectiveLocalInboundPort())
 }
 
 func (a *AppState) UpdateProxyStatus() {
 	a.updateStatusBindings()
 	a.refreshTrayProxyMenu()
+	if a.MainWindow != nil {
+		a.MainWindow.updateHomePortLabel()
+	}
 }
 
 // refreshTrayProxyMenu 刷新托盘代理/模式/节点菜单，使托盘状态与 AppState 一致。
