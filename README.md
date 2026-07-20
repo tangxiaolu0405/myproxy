@@ -27,20 +27,21 @@ MyProxy 是一款现代化的跨平台代理客户端，基于 Go 语言开发�
 
 - **⚡ 强大的代理引擎**
   - 内置 xray-core，开箱即用
-  - 支持 SOCKS5、VMess 等多种协议
-  - 本地 10808 端口监听
+  - 支持 VMess、VLESS、Shadowsocks、Trojan、SOCKS5 等协议
+  - 本地 10808 端口监听（mixed 入站）
 
 - **📡 灵活的订阅管理**
-  - 支持 VMess、SOCKS5 协议
+  - 支持 VMess、VLESS、Shadowsocks、Trojan、SOCKS5 协议链接
   - 兼容 JSON 和 Base64 格式
   - 多标签分类管理订阅源
 
 - **🔧 完整的功能模块**
   - 订阅管理与更新
-  - 服务器列表展示
+  - 服务器列表展示、收藏筛选
   - 延迟测试与服务器筛选
+  - 连接健康定期探测与断线提示
   - 实时日志监控
-  - 系统代理配置（macOS、Windows）
+  - 系统代理配置（macOS、Windows、Linux）
   - 环境变量代理设置（跨平台）
 
 - **💾 数据持久化**
@@ -111,8 +112,8 @@ go build -o myproxy ./cmd/gui
 
 在代理运行中，可选择启用系统代理：
 - **macOS**: 自动配置系统网络设置
-- **Windows**: 通过注册表配置系统代理
-- **Linux**: 支持环境变量代理
+- **Windows**: 通过注册表 / WinINet 配置系统代理
+- **Linux**: GNOME（gsettings）、KDE（kwriteconfig）及终端环境变量代理
 
 ### ⚙️ 配置说明
 
@@ -138,7 +139,7 @@ go build -o myproxy ./cmd/gui
                │
 ┌──────────────▼──────────────┐
 │   代理引擎层 (xray-core)      │
-│  SOCKS5 / VMess 协议支持      │
+│  VMess / VLESS / SS / Trojan / SOCKS5 │
 └──────────────┬──────────────┘
                │
 ┌──────────────▼──────────────┐
@@ -160,7 +161,7 @@ go build -o myproxy ./cmd/gui
 |------|--------|-----------|------|
 | macOS | ✅ | ✅ | 完整支持 |
 | Windows | ✅ | ✅ | 完整支持 |
-| Linux | ⏳ | ✅ | 部分支持 |
+| Linux | ✅ | ✅ | 完整支持 |
 
 ### 🤝 贡献
 
@@ -202,20 +203,21 @@ MyProxy is a modern cross-platform proxy client developed in Go, integrated with
 
 - **⚡ Powerful Proxy Engine**
   - Integrated xray-core, ready to use out of the box
-  - Support for SOCKS5, VMess and other protocols
-  - Listen on local port 10808
+  - Supports VMess, VLESS, Shadowsocks, Trojan, SOCKS5 and more
+  - Listen on local port 10808 (mixed inbound)
 
 - **📡 Flexible Subscription Management**
-  - Support for VMess and SOCKS5 protocols
+  - Support for VMess, VLESS, Shadowsocks, Trojan, SOCKS5 share links
   - Compatible with JSON and Base64 formats
   - Multi-label classification for subscription sources
 
 - **🔧 Complete Feature Set**
   - Subscription management and updates
-  - Server list display
+  - Server list with favorites filter
   - Latency testing and server filtering
+  - Periodic connection health checks with disconnect alerts
   - Real-time log monitoring
-  - System proxy configuration (macOS, Windows)
+  - System proxy configuration (macOS, Windows, Linux)
   - Environment variable proxy setup (cross-platform)
 
 - **💾 Data Persistence**
@@ -286,8 +288,8 @@ The database will be automatically created and initialized on first launch.
 
 While the proxy is running, you can optionally enable system proxy:
 - **macOS**: Automatically configure system network settings
-- **Windows**: Configure system proxy via registry
-- **Linux**: Support environment variable proxy
+- **Windows**: Configure system proxy via registry / WinINet
+- **Linux**: GNOME (gsettings), KDE (kwriteconfig), and terminal environment proxy
 
 ### ⚙️ Configuration
 
@@ -313,7 +315,7 @@ While the proxy is running, you can optionally enable system proxy:
                │
 ┌──────────────▼──────────────┐
 │  Proxy Engine (xray-core)    │
-│  SOCKS5 / VMess Support      │
+│  VMess / VLESS / SS / Trojan / SOCKS5 │
 └──────────────┬──────────────┘
                │
 ┌──────────────▼──────────────┐
@@ -335,7 +337,7 @@ While the proxy is running, you can optionally enable system proxy:
 |----------|-------------|------------------|--------|
 | macOS | ✅ | ✅ | Fully Supported |
 | Windows | ✅ | ✅ | Fully Supported |
-| Linux | ⏳ | ✅ | Partial Support |
+| Linux | ✅ | ✅ | Full Support |
 
 ### 🤝 Contributing
 

@@ -24,6 +24,9 @@ type DiagnosticSummary struct {
 	ProxyRunning             bool               `json:"proxyRunning"`
 	ProxyPort                int                `json:"proxyPort"`
 	CurrentServerName        string             `json:"currentServerName"`
+	NodeCount                int                `json:"nodeCount"`
+	SubscriptionCount        int                `json:"subscriptionCount"`
+	HistorySampleCount       int                `json:"historySampleCount"`
 	LastNodeSwitchAt         time.Time          `json:"lastNodeSwitchAt"`
 	LastSubscriptionUpdateAt time.Time          `json:"lastSubscriptionUpdateAt"`
 	LastDiagnosticExport     string             `json:"lastDiagnosticExport"`

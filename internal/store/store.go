@@ -88,6 +88,7 @@ func (ns *NodesStore) Load() error {
 	ns.mu.Lock()
 	ns.nodes = make([]*model.Node, len(nodes))
 	for i := range nodes {
+		subscription.EnrichNodeFromRawConfig(&nodes[i])
 		ns.nodes[i] = &nodes[i]
 	}
 	// 从数据库恢复“选中”状态，使应用层与列表页一致
@@ -196,6 +197,22 @@ func (ns *NodesStore) UpdateDelay(id string, delay int) error {
 	}
 	if !ns.applyDelayInMemory(id, delay) {
 		return ns.Load()
+	}
+	return nil
+}
+
+// SetFavorited 设置节点收藏状态。
+func (ns *NodesStore) SetFavorited(id string, favorited bool) error {
+	if err := database.SetServerFavorited(id, favorited); err != nil {
+		return fmt.Errorf("节点存储: 更新收藏失败: %w", err)
+	}
+	ns.mu.Lock()
+	defer ns.mu.Unlock()
+	for _, node := range ns.nodes {
+		if node.ID == id {
+			node.Favorited = favorited
+			return nil
+		}
 	}
 	return nil
 }

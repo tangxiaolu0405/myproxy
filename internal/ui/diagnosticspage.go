@@ -28,6 +28,9 @@ type DiagnosticsPage struct {
 	memChart      *MetricChart
 	gorChart      *MetricChart
 
+	exportButtons []*widget.Button
+	exportBusy    bool
+
 	ticker      *time.Ticker
 	stopCh      chan struct{}
 	cleanupOnce sync.Once
@@ -158,72 +161,76 @@ func (dp *DiagnosticsPage) Build() fyne.CanvasObject {
 		}),
 	)
 
-	buttonsRow1 := container.NewGridWithColumns(2,
-		widget.NewButtonWithIcon("导出堆快照", theme.DownloadIcon(), func() {
-			dp.runAsyncAction("正在导出堆快照...", func() (string, error) {
-				path, err := dp.appState.DiagnosticsService.ExportHeapProfile()
-				if err != nil {
-					return "", err
-				}
-				summary := dp.currentSummary()
-				_, _ = dp.appState.DiagnosticsService.ExportSummaryJSON(summary)
-				return "堆快照已导出: " + path, nil
-			})
-		}),
-		widget.NewButtonWithIcon("导出 Goroutine 快照", theme.DownloadIcon(), func() {
-			dp.runAsyncAction("正在导出 Goroutine 快照...", func() (string, error) {
-				path, err := dp.appState.DiagnosticsService.ExportGoroutineProfile()
-				if err != nil {
-					return "", err
-				}
-				summary := dp.currentSummary()
-				_, _ = dp.appState.DiagnosticsService.ExportSummaryJSON(summary)
-				return "Goroutine 快照已导出: " + path, nil
-			})
-		}),
-	)
-	buttonsRow2 := container.NewGridWithColumns(2,
-		widget.NewButtonWithIcon("生成火焰图", theme.MediaPlayIcon(), func() {
-			dp.runAsyncAction("正在生成火焰图...", func() (string, error) {
-				profilePath, svgPath, err := dp.appState.DiagnosticsService.GenerateHeapFlameGraph()
-				if err != nil {
-					if profilePath != "" {
-						return "", fmt.Errorf("%w（已保留 profile: %s）", err, profilePath)
-					}
-					return "", err
-				}
-				summary := dp.currentSummary()
-				_, _ = dp.appState.DiagnosticsService.ExportSummaryJSON(summary)
-				return "火焰图已生成: " + svgPath, nil
-			})
-		}),
-		widget.NewButtonWithIcon("打开诊断目录", theme.FolderOpenIcon(), func() {
-			dp.runAsyncAction("正在打开诊断目录...", func() (string, error) {
-				if err := dp.appState.DiagnosticsService.OpenDiagnosticsDirectory(); err != nil {
-					return "", err
-				}
-				return "诊断目录已打开: " + dp.currentSummary().DiagnosticsDir, nil
-			})
-		}),
-	)
-	buttonsRow3 := container.NewGridWithColumns(2,
-		widget.NewButtonWithIcon("复制诊断摘要", theme.ContentCopyIcon(), func() {
-			summary := formatDiagnosticSummary(dp.currentSummary())
-			if dp.appState != nil && dp.appState.Window != nil {
-				dp.appState.Window.Clipboard().SetContent(summary)
+	exportHeapBtn := widget.NewButtonWithIcon("导出堆快照", theme.DownloadIcon(), func() {
+		dp.runAsyncAction("正在导出堆快照...", func() (string, error) {
+			path, err := dp.appState.DiagnosticsService.ExportHeapProfile()
+			if err != nil {
+				return "", err
 			}
-			dp.setExportStatus("诊断摘要已复制到剪贴板")
-		}),
-		widget.NewButtonWithIcon("导出摘要 JSON", theme.DocumentCreateIcon(), func() {
-			dp.runAsyncAction("正在导出诊断摘要...", func() (string, error) {
-				path, err := dp.appState.DiagnosticsService.ExportSummaryJSON(dp.currentSummary())
-				if err != nil {
-					return "", err
+			summary := dp.currentSummary()
+			_, _ = dp.appState.DiagnosticsService.ExportSummaryJSON(summary)
+			return "堆快照已导出: " + path, nil
+		})
+	})
+	exportGoroutineBtn := widget.NewButtonWithIcon("导出 Goroutine 快照", theme.DownloadIcon(), func() {
+		dp.runAsyncAction("正在导出 Goroutine 快照...", func() (string, error) {
+			path, err := dp.appState.DiagnosticsService.ExportGoroutineProfile()
+			if err != nil {
+				return "", err
+			}
+			summary := dp.currentSummary()
+			_, _ = dp.appState.DiagnosticsService.ExportSummaryJSON(summary)
+			return "Goroutine 快照已导出: " + path, nil
+		})
+	})
+	flameBtn := widget.NewButtonWithIcon("生成火焰图", theme.MediaPlayIcon(), func() {
+		dp.runAsyncAction("正在生成火焰图...", func() (string, error) {
+			profilePath, svgPath, err := dp.appState.DiagnosticsService.GenerateHeapFlameGraph()
+			if err != nil {
+				if profilePath != "" {
+					return "", fmt.Errorf("%w（已保留 profile: %s）", err, profilePath)
 				}
-				return "诊断摘要已导出: " + path, nil
-			})
-		}),
-	)
+				return "", err
+			}
+			summary := dp.currentSummary()
+			_, _ = dp.appState.DiagnosticsService.ExportSummaryJSON(summary)
+			return "火焰图已生成: " + svgPath, nil
+		})
+	})
+	openDirBtn := widget.NewButtonWithIcon("打开诊断目录", theme.FolderOpenIcon(), func() {
+		dp.runAsyncAction("正在打开诊断目录...", func() (string, error) {
+			if err := dp.appState.DiagnosticsService.OpenDiagnosticsDirectory(); err != nil {
+				return "", err
+			}
+			return "诊断目录已打开: " + dp.currentSummary().DiagnosticsDir, nil
+		})
+	})
+	copySummaryBtn := widget.NewButtonWithIcon("复制诊断摘要", theme.ContentCopyIcon(), func() {
+		if dp.exportBusy {
+			return
+		}
+		summary := formatDiagnosticSummary(dp.currentSummary())
+		if dp.appState != nil && dp.appState.Window != nil {
+			dp.appState.Window.Clipboard().SetContent(summary)
+		}
+		dp.setExportStatus("诊断摘要已复制到剪贴板")
+	})
+	exportSummaryBtn := widget.NewButtonWithIcon("导出摘要 JSON", theme.DocumentCreateIcon(), func() {
+		dp.runAsyncAction("正在导出诊断摘要...", func() (string, error) {
+			path, err := dp.appState.DiagnosticsService.ExportSummaryJSON(dp.currentSummary())
+			if err != nil {
+				return "", err
+			}
+			return "诊断摘要已导出: " + path, nil
+		})
+	})
+	dp.exportButtons = []*widget.Button{
+		exportHeapBtn, exportGoroutineBtn, flameBtn, openDirBtn, copySummaryBtn, exportSummaryBtn,
+	}
+
+	buttonsRow1 := container.NewGridWithColumns(2, exportHeapBtn, exportGoroutineBtn)
+	buttonsRow2 := container.NewGridWithColumns(2, flameBtn, openDirBtn)
+	buttonsRow3 := container.NewGridWithColumns(2, copySummaryBtn, exportSummaryBtn)
 
 	configCard := container.NewVBox(
 		widget.NewLabelWithStyle("诊断配置", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
@@ -369,10 +376,15 @@ func (dp *DiagnosticsPage) openPprofURL(raw string, err error) {
 }
 
 func (dp *DiagnosticsPage) runAsyncAction(startText string, fn func() (string, error)) {
+	if dp.exportBusy {
+		return
+	}
+	dp.setExportBusy(true)
 	dp.setExportStatus(startText)
 	go func() {
 		message, err := fn()
 		fyne.Do(func() {
+			dp.setExportBusy(false)
 			if err != nil {
 				dp.showError(err)
 				dp.setExportStatus(err.Error())
@@ -382,6 +394,20 @@ func (dp *DiagnosticsPage) runAsyncAction(startText string, fn func() (string, e
 			dp.Refresh()
 		})
 	}()
+}
+
+func (dp *DiagnosticsPage) setExportBusy(busy bool) {
+	dp.exportBusy = busy
+	for _, btn := range dp.exportButtons {
+		if btn == nil {
+			continue
+		}
+		if busy {
+			btn.Disable()
+		} else {
+			btn.Enable()
+		}
+	}
 }
 
 func (dp *DiagnosticsPage) showError(err error) {
@@ -420,10 +446,13 @@ func formatDiagnosticSummary(summary model.DiagnosticSummary) string {
 	}
 
 	return fmt.Sprintf(
-		"代理状态: %s\n当前节点: %s\n监听端口: %d\nHeapInuse: %s\nAlloc: %s\nSys: %s\nGoroutines: %d\nGC 次数: %d\npprof: %t (%s)\n最近节点切换: %s\n最近订阅更新: %s\n最近诊断导出: %s",
+		"代理状态: %s\n当前节点: %s\n监听端口: %d\n节点数: %d\n订阅数: %d\n采样点数: %d\nHeapInuse: %s\nAlloc: %s\nSys: %s\nGoroutines: %d\nGC 次数: %d\npprof: %t (%s)\n最近节点切换: %s\n最近订阅更新: %s\n最近诊断导出: %s",
 		boolText(summary.ProxyRunning, "运行中", "未运行"),
 		summary.CurrentServerName,
 		summary.ProxyPort,
+		summary.NodeCount,
+		summary.SubscriptionCount,
+		summary.HistorySampleCount,
 		formatBytes(summary.Current.HeapInuse),
 		formatBytes(summary.Current.Alloc),
 		formatBytes(summary.Current.Sys),

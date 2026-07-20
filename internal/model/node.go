@@ -11,7 +11,8 @@ type Node struct {
 	Delay        int    `json:"delay"`         // 延迟（毫秒）
 	Selected     bool   `json:"selected"`      // 是否被选中
 	Enabled      bool   `json:"enabled"`       // 是否启用
-	ProtocolType string `json:"protocol_type"` // 协议类型: vmess, ss, ssr, socks5, etc.
+	Favorited    bool   `json:"favorited"`     // 是否收藏
+	ProtocolType string `json:"protocol_type"` // 协议类型: vmess, ss, trojan, vless, socks5 等
 
 	// VMess 协议字段
 	VMessVersion  string `json:"vmess_version,omitempty"`  // VMess 版本 (v)
@@ -40,6 +41,23 @@ type Node struct {
 	TrojanSNI           string `json:"trojan_sni,omitempty"`            // Trojan SNI
 	TrojanAlpn          string `json:"trojan_alpn,omitempty"`           // Trojan ALPN
 	TrojanAllowInsecure bool   `json:"trojan_allow_insecure,omitempty"` // Trojan 是否允许不安全连接
+
+	// VLESS 协议字段
+	VLESSUUID          string `json:"vless_uuid,omitempty"`
+	VLESSFlow          string `json:"vless_flow,omitempty"`
+	VLESSEncryption    string `json:"vless_encryption,omitempty"`
+	VLESSNetwork       string `json:"vless_network,omitempty"`
+	VLESSType          string `json:"vless_type,omitempty"`
+	VLESSHost          string `json:"vless_host,omitempty"`
+	VLESSPath          string `json:"vless_path,omitempty"`
+	VLESSSecurity      string `json:"vless_security,omitempty"` // "", "tls", "reality"
+	VLESSSNI           string `json:"vless_sni,omitempty"`
+	VLESSALPN          string `json:"vless_alpn,omitempty"`
+	VLESSFingerprint   string `json:"vless_fingerprint,omitempty"`
+	VLESSPublicKey     string `json:"vless_public_key,omitempty"`
+	VLESSShortID       string `json:"vless_short_id,omitempty"`
+	VLESSSpiderX       string `json:"vless_spider_x,omitempty"`
+	VLESSAllowInsecure bool   `json:"vless_allow_insecure,omitempty"`
 
 	// 原始配置 JSON（用于存储完整的协议配置，便于未来扩展）
 	RawConfig string `json:"raw_config,omitempty"` // 原始配置 JSON 字符串

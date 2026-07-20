@@ -458,6 +458,34 @@ func CreateOutboundFromServer(server *model.Node) (map[string]interface{}, error
 			"streamSettings": streamSettings,
 		}
 
+	case "vless":
+		encryption := server.VLESSEncryption
+		if encryption == "" {
+			encryption = "none"
+		}
+		user := map[string]interface{}{
+			"id":         server.VLESSUUID,
+			"encryption": encryption,
+		}
+		if server.VLESSFlow != "" {
+			user["flow"] = server.VLESSFlow
+		}
+		vlessConfig := map[string]interface{}{
+			"vnext": []map[string]interface{}{
+				{
+					"address": server.Addr,
+					"port":    server.Port,
+					"users":   []map[string]interface{}{user},
+				},
+			},
+		}
+		outbound = map[string]interface{}{
+			"tag":            "proxy",
+			"protocol":       "vless",
+			"settings":       vlessConfig,
+			"streamSettings": buildVLESSStreamSettings(server),
+		}
+
 	default:
 		return nil, fmt.Errorf("Xray: 不支持的协议类型: %s", server.ProtocolType)
 	}
@@ -536,6 +564,102 @@ func getVMessNetwork(network string) string {
 		return "tcp"
 	}
 	return network
+}
+
+// buildVLESSStreamSettings 构建 VLESS 传输与安全配置（tcp/ws/grpc + tls/reality）。
+func buildVLESSStreamSettings(server *model.Node) map[string]interface{} {
+	network := server.VLESSNetwork
+	if network == "" {
+		network = "tcp"
+	}
+	streamSettings := map[string]interface{}{
+		"network": network,
+	}
+
+	switch network {
+	case "ws", "websocket":
+		wsSettings := map[string]interface{}{}
+		if server.VLESSHost != "" {
+			wsSettings["host"] = server.VLESSHost
+		}
+		if server.VLESSPath != "" {
+			wsSettings["path"] = server.VLESSPath
+		}
+		if len(wsSettings) > 0 {
+			streamSettings["wsSettings"] = wsSettings
+		}
+	case "grpc":
+		grpcSettings := map[string]interface{}{}
+		if server.VLESSPath != "" {
+			grpcSettings["serviceName"] = server.VLESSPath
+		}
+		if len(grpcSettings) > 0 {
+			streamSettings["grpcSettings"] = grpcSettings
+		}
+	case "h2", "http":
+		h2Settings := map[string]interface{}{}
+		if server.VLESSHost != "" {
+			h2Settings["host"] = []string{server.VLESSHost}
+		}
+		if server.VLESSPath != "" {
+			h2Settings["path"] = server.VLESSPath
+		}
+		if len(h2Settings) > 0 {
+			streamSettings["httpSettings"] = h2Settings
+		}
+	}
+
+	security := strings.ToLower(strings.TrimSpace(server.VLESSSecurity))
+	switch security {
+	case "tls":
+		tlsSettings := map[string]interface{}{
+			"allowInsecure": server.VLESSAllowInsecure,
+		}
+		if server.VLESSSNI != "" {
+			tlsSettings["serverName"] = server.VLESSSNI
+		} else if server.VLESSHost != "" {
+			tlsSettings["serverName"] = server.VLESSHost
+		}
+		if server.VLESSFingerprint != "" {
+			tlsSettings["fingerprint"] = server.VLESSFingerprint
+		}
+		if server.VLESSALPN != "" {
+			alpnArray := []string{}
+			for _, a := range strings.Split(server.VLESSALPN, ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					alpnArray = append(alpnArray, a)
+				}
+			}
+			if len(alpnArray) > 0 {
+				tlsSettings["alpn"] = alpnArray
+			}
+		}
+		streamSettings["security"] = "tls"
+		streamSettings["tlsSettings"] = tlsSettings
+	case "reality":
+		realitySettings := map[string]interface{}{}
+		if server.VLESSSNI != "" {
+			realitySettings["serverName"] = server.VLESSSNI
+		} else if server.VLESSHost != "" {
+			realitySettings["serverName"] = server.VLESSHost
+		}
+		if server.VLESSFingerprint != "" {
+			realitySettings["fingerprint"] = server.VLESSFingerprint
+		}
+		if server.VLESSPublicKey != "" {
+			realitySettings["publicKey"] = server.VLESSPublicKey
+		}
+		if server.VLESSShortID != "" {
+			realitySettings["shortId"] = server.VLESSShortID
+		}
+		if server.VLESSSpiderX != "" {
+			realitySettings["spiderX"] = server.VLESSSpiderX
+		}
+		streamSettings["security"] = "reality"
+		streamSettings["realitySettings"] = realitySettings
+	}
+
+	return streamSettings
 }
 
 // buildSSStreamSettings 构建 Shadowsocks 传输协议配置

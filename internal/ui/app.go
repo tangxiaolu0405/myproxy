@@ -10,6 +10,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/logging"
@@ -39,6 +40,7 @@ type AppState struct {
 	XrayControlService  *service.XrayControlService
 	AccessRecordService *service.AccessRecordService
 	DiagnosticsService  *service.DiagnosticsService
+	HealthCheckService  *service.HealthCheckService
 	XrayInstance        *xray.XrayInstance
 	LogsPanel           *LogsPanel // 日志面板，仅设置页使用；OnLogLine 分发到此
 	ProxyStatusBinding  binding.String
@@ -84,6 +86,28 @@ func NewAppState(appVersion string) *AppState {
 		DiagnosticsService:  service.NewDiagnosticsService(configService, dataStore),
 	}
 
+	appState.HealthCheckService = service.NewHealthCheckService(
+		func() bool {
+			return appState.XrayInstance != nil && appState.XrayInstance.IsRunning()
+		},
+		func() int {
+			return appState.EffectiveLocalInboundPort()
+		},
+		func(message string) {
+			if appState.SafeLogger != nil {
+				appState.SafeLogger.Warn(message)
+			}
+			appState.AppendLog("WARN", "health", message)
+			fyne.Do(func() {
+				if appState.Window != nil {
+					dialog.ShowInformation("连接中断", message, appState.Window)
+					appState.Window.Show()
+					appState.Window.RequestFocus()
+				}
+			})
+		},
+	)
+
 	// LogCallback 保留用于兼容，但展示已改为通过 OnLogLine 统一分发
 	appState.LogCallback = nil
 
@@ -127,6 +151,10 @@ func (a *AppState) UpdateProxyStatus() {
 	a.refreshTrayProxyMenu()
 	if a.MainWindow != nil {
 		a.MainWindow.updateHomePortLabel()
+	}
+	if a.HealthCheckService != nil {
+		running := a.XrayInstance != nil && a.XrayInstance.IsRunning()
+		a.HealthCheckService.SyncWithProxyState(running)
 	}
 }
 
@@ -427,7 +455,7 @@ func (a *AppState) autoLoadProxyConfig() error {
 		a.ProxyService.UpdateXrayInstance(a.XrayInstance)
 	}
 
-	a.updateStatusBindings()
+	a.UpdateProxyStatus()
 
 	a.AppendLog("INFO", "app", "代理服务自动启动成功")
 	return nil
@@ -435,6 +463,10 @@ func (a *AppState) autoLoadProxyConfig() error {
 
 func (a *AppState) Cleanup() {
 	a.stopWindowSizeSaveTimer()
+
+	if a.HealthCheckService != nil {
+		a.HealthCheckService.Stop()
+	}
 
 	if a.TrayManager != nil {
 		a.TrayManager.StopPingRefresh()

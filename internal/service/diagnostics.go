@@ -24,7 +24,9 @@ import (
 const (
 	defaultDiagnosticsDirName    = "diagnostics"
 	defaultDiagnosticsSampleSecs = 5
-	diagnosticsHistoryLimit      = 180
+	// 约 1 小时（默认 5s 采样）；配合可调采样周期支撑长时间内存曲线观测
+	diagnosticsHistoryLimit = 720
+	diagnosticsExportMaxAge = 7 * 24 * time.Hour
 )
 
 // DiagnosticsService 提供运行时采样、摘要导出和 pprof 管理能力。
@@ -70,6 +72,8 @@ func (ds *DiagnosticsService) Start() error {
 	ds.mu.Unlock()
 
 	go ds.sampleLoop(stopCh, stoppedCh)
+
+	_ = ds.CleanupOldExports(diagnosticsExportMaxAge)
 
 	return ds.applyPprofConfig()
 }
@@ -153,6 +157,17 @@ func (ds *DiagnosticsService) GetSummary(proxyRunning bool, proxyPort int, serve
 	current := ds.CurrentSnapshot()
 	executablePath, _ := os.Executable()
 
+	nodeCount := 0
+	subscriptionCount := 0
+	if ds.store != nil {
+		if ds.store.Nodes != nil {
+			nodeCount = len(ds.store.Nodes.GetAll())
+		}
+		if ds.store.Subscriptions != nil {
+			subscriptionCount = ds.store.Subscriptions.GetSubscriptionCount()
+		}
+	}
+
 	return model.DiagnosticSummary{
 		Timestamp:                time.Now(),
 		GoVersion:                runtime.Version(),
@@ -163,6 +178,9 @@ func (ds *DiagnosticsService) GetSummary(proxyRunning bool, proxyPort int, serve
 		ProxyRunning:             proxyRunning,
 		ProxyPort:                proxyPort,
 		CurrentServerName:        serverName,
+		NodeCount:                nodeCount,
+		SubscriptionCount:        subscriptionCount,
+		HistorySampleCount:       len(ds.History()),
 		LastNodeSwitchAt:         ds.getConfigTime("lastNodeSwitchAt"),
 		LastSubscriptionUpdateAt: ds.getConfigTime("lastSubscriptionUpdateAt"),
 		LastDiagnosticExport:     ds.getConfigValue("lastDiagnosticExport"),
@@ -172,6 +190,7 @@ func (ds *DiagnosticsService) GetSummary(proxyRunning bool, proxyPort int, serve
 
 // ExportHeapProfile 导出堆快照。
 func (ds *DiagnosticsService) ExportHeapProfile() (string, error) {
+	_ = ds.CleanupOldExports(diagnosticsExportMaxAge)
 	if err := os.MkdirAll(ds.getDiagnosticsDir(), 0755); err != nil {
 		return "", fmt.Errorf("创建诊断目录失败: %w", err)
 	}
@@ -194,6 +213,7 @@ func (ds *DiagnosticsService) ExportHeapProfile() (string, error) {
 
 // ExportGoroutineProfile 导出 goroutine 快照。
 func (ds *DiagnosticsService) ExportGoroutineProfile() (string, error) {
+	_ = ds.CleanupOldExports(diagnosticsExportMaxAge)
 	if err := os.MkdirAll(ds.getDiagnosticsDir(), 0755); err != nil {
 		return "", fmt.Errorf("创建诊断目录失败: %w", err)
 	}
@@ -219,6 +239,7 @@ func (ds *DiagnosticsService) ExportGoroutineProfile() (string, error) {
 
 // ExportSummaryJSON 导出诊断摘要 JSON。
 func (ds *DiagnosticsService) ExportSummaryJSON(summary model.DiagnosticSummary) (string, error) {
+	_ = ds.CleanupOldExports(diagnosticsExportMaxAge)
 	if err := os.MkdirAll(ds.getDiagnosticsDir(), 0755); err != nil {
 		return "", fmt.Errorf("创建诊断目录失败: %w", err)
 	}
@@ -395,6 +416,40 @@ func (ds *DiagnosticsService) getDiagnosticsDir() string {
 		return filepath.Join("data", defaultDiagnosticsDirName)
 	}
 	return filepath.Join(workDir, "data", defaultDiagnosticsDirName)
+}
+
+// CleanupOldExports 删除诊断目录中超过 maxAge 的导出文件（.pprof / .json / .svg）。
+func (ds *DiagnosticsService) CleanupOldExports(maxAge time.Duration) error {
+	if maxAge <= 0 {
+		maxAge = diagnosticsExportMaxAge
+	}
+	dir := ds.getDiagnosticsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".pprof" && ext != ".json" && ext != ".svg" {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+	return nil
 }
 
 func (ds *DiagnosticsService) recordLastExport(path string) {

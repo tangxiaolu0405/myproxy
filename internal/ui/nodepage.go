@@ -25,8 +25,10 @@ type NodePage struct {
 	listener   binding.DataListener
 
 	// 搜索与过滤相关
-	searchEntry *widget.Entry // 节点搜索输入框
-	searchText  string        // 当前搜索关键字（小写）
+	searchEntry     *widget.Entry // 节点搜索输入框
+	searchText      string        // 当前搜索关键字（小写）
+	favoritesOnly   bool          // 仅显示收藏节点
+	favoritesCheck  *widget.Check // 收藏过滤开关
 
 	// UI 组件
 	selectedServerLabel *widget.Label // 当前选中服务器名标签
@@ -142,11 +144,16 @@ func (np *NodePage) Build() fyne.CanvasObject {
 	})
 	searchBtn.Importance = widget.LowImportance
 
-	// 搜索栏布局（搜索框 + 搜索按钮，移除 padding 降低高度）
+	np.favoritesCheck = widget.NewCheck("仅收藏", func(on bool) {
+		np.favoritesOnly = on
+		np.Refresh()
+	})
+
+	// 搜索栏布局（搜索框 + 收藏过滤 + 搜索按钮）
 	searchBar := container.NewBorder(
 		nil, nil, nil,
-		searchBtn,
-		np.searchEntry, // 移除 padding 降低搜索框高度
+		container.NewHBox(np.favoritesCheck, searchBtn),
+		np.searchEntry,
 	)
 
 	// 6. 表格头（与列表项对齐，使用最小高度）
@@ -259,10 +266,8 @@ func (np *NodePage) getNodeCount() int {
 	return len(np.getFilteredNodes())
 }
 
-// getFilteredNodes 根据当前搜索关键字返回过滤后的节点列表。
-// 支持按名称、地址、协议类型进行不区分大小写的匹配。
+// getFilteredNodes 根据当前搜索关键字与收藏过滤返回节点列表。
 func (np *NodePage) getFilteredNodes() []*model.Node {
-	// 从 Store 获取所有节点
 	var allNodes []*model.Node
 	if np.appState != nil && np.appState.Store != nil && np.appState.Store.Nodes != nil {
 		allNodes = np.appState.Store.Nodes.GetAll()
@@ -270,17 +275,18 @@ func (np *NodePage) getFilteredNodes() []*model.Node {
 		allNodes = []*model.Node{}
 	}
 
-	// 如果没有搜索关键字，直接返回完整列表
-	if np.searchText == "" {
-		return allNodes
-	}
-
 	filtered := make([]*model.Node, 0, len(allNodes))
 	for _, node := range allNodes {
+		if np.favoritesOnly && !node.Favorited {
+			continue
+		}
+		if np.searchText == "" {
+			filtered = append(filtered, node)
+			continue
+		}
 		name := strings.ToLower(node.Name)
 		addr := strings.ToLower(node.Addr)
 		protocol := strings.ToLower(node.ProtocolType)
-
 		if strings.Contains(name, np.searchText) ||
 			strings.Contains(addr, np.searchText) ||
 			strings.Contains(protocol, np.searchText) {
@@ -372,20 +378,25 @@ func (np *NodePage) onRightClick(id widget.ListItemID, ev *fyne.PointEvent) {
 	// 创建右键菜单
 	menuItems := []*fyne.MenuItem{
 		fyne.NewMenuItem("连接", func() {
-			// 启动代理连接
 			np.onStartProxy(id)
 		}),
 		fyne.NewMenuItem("测速", func() {
-			// 测速
 			np.onTestSpeed(id)
 		}),
 	}
+
+	favLabel := "收藏"
+	if nodes[id].Favorited {
+		favLabel = "取消收藏"
+	}
+	menuItems = append(menuItems, fyne.NewMenuItem(favLabel, func() {
+		np.toggleFavorite(nodes[id].ID, !nodes[id].Favorited)
+	}))
 
 	// 如果代理正在运行，添加停止选项
 	if np.appState != nil && np.appState.XrayInstance != nil && np.appState.XrayInstance.IsRunning() {
 		menuItems = append(menuItems, fyne.NewMenuItemSeparator())
 		menuItems = append(menuItems, fyne.NewMenuItem("停止代理", func() {
-			// 停止代理
 			np.onStopProxy()
 		}))
 	}
@@ -908,32 +919,62 @@ func (s *ServerListItem) Update(server model.Node) {
 	})
 }
 
-// showQuickMenu 显示快速操作菜单 - 注释功能
+// toggleFavorite 切换节点收藏状态。
+func (np *NodePage) toggleFavorite(nodeID string, favorited bool) {
+	if np.appState == nil || np.appState.Store == nil || np.appState.Store.Nodes == nil {
+		return
+	}
+	if err := np.appState.Store.Nodes.SetFavorited(nodeID, favorited); err != nil {
+		if np.appState.Window != nil {
+			dialog.ShowError(err, np.appState.Window)
+		}
+		return
+	}
+	np.Refresh()
+}
+
+// showQuickMenu 显示快速操作菜单。
 func (s *ServerListItem) showQuickMenu(server model.Node) {
 	if s.panel == nil || s.panel.appState == nil || s.panel.appState.Window == nil {
 		return
 	}
 
-	// 创建快速操作菜单
+	favLabel := "收藏"
+	if server.Favorited {
+		favLabel = "取消收藏"
+	}
+
 	menu := fyne.NewMenu("",
 		fyne.NewMenuItem("连接", func() {
-			if s.panel != nil {
-				// s.panel.onStartProxy(s.id)
+			if s.panel == nil {
+				return
+			}
+			nodes := s.panel.getFilteredNodes()
+			for i, n := range nodes {
+				if n != nil && n.ID == server.ID {
+					s.panel.onStartProxy(widget.ListItemID(i))
+					return
+				}
 			}
 		}),
 		fyne.NewMenuItem("测速", func() {
-			if s.panel != nil {
-				// s.panel.onTestSpeed(s.id)
+			if s.panel == nil {
+				return
+			}
+			nodes := s.panel.getFilteredNodes()
+			for i, n := range nodes {
+				if n != nil && n.ID == server.ID {
+					s.panel.onTestSpeed(widget.ListItemID(i))
+					return
+				}
 			}
 		}),
-		fyne.NewMenuItem("收藏", func() {
-			// TODO: 实现收藏功能
-			if s.panel != nil && s.panel.appState != nil && s.panel.appState.Window != nil {
-				dialog.ShowInformation("提示", "收藏功能开发中", s.panel.appState.Window)
+		fyne.NewMenuItem(favLabel, func() {
+			if s.panel != nil {
+				s.panel.toggleFavorite(server.ID, !server.Favorited)
 			}
 		}),
 		fyne.NewMenuItem("复制信息", func() {
-			// TODO: 实现复制节点信息功能
 			info := fmt.Sprintf("名称: %s\n地址: %s:%d\n协议: %s",
 				server.Name, server.Addr, server.Port, server.ProtocolType)
 			if s.panel != nil && s.panel.appState != nil && s.panel.appState.Window != nil {
@@ -943,11 +984,11 @@ func (s *ServerListItem) showQuickMenu(server model.Node) {
 		}),
 	)
 
-	// 显示菜单
 	popup := widget.NewPopUpMenu(menu, s.panel.appState.Window.Canvas())
-	// 在菜单按钮位置显示
 	if s.menuButton != nil {
 		pos := fyne.NewPos(s.menuButton.Position().X, s.menuButton.Position().Y+s.menuButton.Size().Height)
 		popup.ShowAtPosition(pos)
+	} else {
+		popup.Show()
 	}
 }

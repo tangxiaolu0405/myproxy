@@ -332,6 +332,7 @@ func migrateTables() error {
 		{"ssr_protocol", "TEXT DEFAULT ''"},
 		{"ssr_protocol_param", "TEXT DEFAULT ''"},
 		{"raw_config", "TEXT DEFAULT ''"},
+		{"favorited", "INTEGER DEFAULT 0"},
 	}
 
 	// 获取表结构信息
@@ -715,13 +716,13 @@ func AddOrUpdateServer(server Node, subscriptionID *int64) error {
 // 返回：服务器实例和错误（如果未找到或发生错误）
 func GetServer(id string) (*Node, error) {
 	var server Node
-	var selected, enabled int
+	var selected, enabled, favorited int
 
 	err := DB.QueryRow(
 		`SELECT id, name, addr, port, username, password, delay, selected, enabled,
 			node_protocol_type, vmess_version, vmess_uuid, vmess_alter_id, vmess_security, vmess_network,
 			vmess_type, vmess_host, vmess_path, vmess_tls, ss_method, ss_plugin, ss_plugin_opts,
-			ssr_obfs, ssr_obfs_param, ssr_protocol, ssr_protocol_param, raw_config
+			ssr_obfs, ssr_obfs_param, ssr_protocol, ssr_protocol_param, raw_config, favorited
 		 FROM servers WHERE id = ?`,
 		id,
 	).Scan(&server.ID, &server.Name, &server.Addr, &server.Port,
@@ -731,7 +732,7 @@ func GetServer(id string) (*Node, error) {
 		&server.VMessSecurity, &server.VMessNetwork, &server.VMessType, &server.VMessHost,
 		&server.VMessPath, &server.VMessTLS, &server.SSMethod, &server.SSPlugin, &server.SSPluginOpts,
 		&server.SSRObfs, &server.SSRObfsParam, &server.SSRProtocol, &server.SSRProtocolParam,
-		&server.RawConfig)
+		&server.RawConfig, &favorited)
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("服务器不存在: %s", id)
@@ -742,6 +743,7 @@ func GetServer(id string) (*Node, error) {
 
 	server.Selected = intToBool(selected)
 	server.Enabled = intToBool(enabled)
+	server.Favorited = intToBool(favorited)
 
 	// 如果 ProtocolType 为空，设置默认值
 	if server.ProtocolType == "" {
@@ -758,7 +760,7 @@ func GetAllServers() ([]Node, error) {
 		`SELECT id, name, addr, port, username, password, delay, selected, enabled,
 			node_protocol_type, vmess_version, vmess_uuid, vmess_alter_id, vmess_security, vmess_network,
 			vmess_type, vmess_host, vmess_path, vmess_tls, ss_method, ss_plugin, ss_plugin_opts,
-			ssr_obfs, ssr_obfs_param, ssr_protocol, ssr_protocol_param, raw_config
+			ssr_obfs, ssr_obfs_param, ssr_protocol, ssr_protocol_param, raw_config, favorited
 		 FROM servers ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -769,7 +771,7 @@ func GetAllServers() ([]Node, error) {
 	var servers []Node
 	for rows.Next() {
 		var server Node
-		var selected, enabled int
+		var selected, enabled, favorited int
 
 		if err := rows.Scan(&server.ID, &server.Name, &server.Addr, &server.Port,
 			&server.Username, &server.Password, &server.Delay,
@@ -778,12 +780,13 @@ func GetAllServers() ([]Node, error) {
 			&server.VMessSecurity, &server.VMessNetwork, &server.VMessType, &server.VMessHost,
 			&server.VMessPath, &server.VMessTLS, &server.SSMethod, &server.SSPlugin, &server.SSPluginOpts,
 			&server.SSRObfs, &server.SSRObfsParam, &server.SSRProtocol, &server.SSRProtocolParam,
-			&server.RawConfig); err != nil {
+			&server.RawConfig, &favorited); err != nil {
 			return nil, fmt.Errorf("扫描服务器数据失败: %w", err)
 		}
 
 		server.Selected = intToBool(selected)
 		server.Enabled = intToBool(enabled)
+		server.Favorited = intToBool(favorited)
 
 		// 如果 ProtocolType 为空，设置默认值
 		if server.ProtocolType == "" {
@@ -810,7 +813,7 @@ func GetServersBySubscriptionID(subscriptionID int64) ([]Node, error) {
 		`SELECT id, name, addr, port, username, password, delay, selected, enabled,
 			node_protocol_type, vmess_version, vmess_uuid, vmess_alter_id, vmess_security, vmess_network,
 			vmess_type, vmess_host, vmess_path, vmess_tls, ss_method, ss_plugin, ss_plugin_opts,
-			ssr_obfs, ssr_obfs_param, ssr_protocol, ssr_protocol_param, raw_config
+			ssr_obfs, ssr_obfs_param, ssr_protocol, ssr_protocol_param, raw_config, favorited
 		 FROM servers WHERE subscription_id = ? ORDER BY created_at DESC`,
 		subscriptionID,
 	)
@@ -822,7 +825,7 @@ func GetServersBySubscriptionID(subscriptionID int64) ([]Node, error) {
 	var servers []Node
 	for rows.Next() {
 		var server Node
-		var selected, enabled int
+		var selected, enabled, favorited int
 
 		if err := rows.Scan(&server.ID, &server.Name, &server.Addr, &server.Port,
 			&server.Username, &server.Password, &server.Delay,
@@ -831,12 +834,13 @@ func GetServersBySubscriptionID(subscriptionID int64) ([]Node, error) {
 			&server.VMessSecurity, &server.VMessNetwork, &server.VMessType, &server.VMessHost,
 			&server.VMessPath, &server.VMessTLS, &server.SSMethod, &server.SSPlugin, &server.SSPluginOpts,
 			&server.SSRObfs, &server.SSRObfsParam, &server.SSRProtocol, &server.SSRProtocolParam,
-			&server.RawConfig); err != nil {
+			&server.RawConfig, &favorited); err != nil {
 			return nil, fmt.Errorf("扫描服务器数据失败: %w", err)
 		}
 
 		server.Selected = intToBool(selected)
 		server.Enabled = intToBool(enabled)
+		server.Favorited = intToBool(favorited)
 
 		// 如果 ProtocolType 为空，设置默认值
 		if server.ProtocolType == "" {
@@ -851,6 +855,16 @@ func GetServersBySubscriptionID(subscriptionID int64) ([]Node, error) {
 	}
 
 	return servers, nil
+}
+
+// SetServerFavorited 设置节点收藏状态。
+func SetServerFavorited(id string, favorited bool) error {
+	_, err := DB.Exec(`UPDATE servers SET favorited = ?, updated_at = ? WHERE id = ?`,
+		boolToInt(favorited), time.Now(), id)
+	if err != nil {
+		return fmt.Errorf("更新收藏状态失败: %w", err)
+	}
+	return nil
 }
 
 // UpdateServerDelay 更新服务器的延迟值。

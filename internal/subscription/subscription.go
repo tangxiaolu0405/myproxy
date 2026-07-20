@@ -441,6 +441,173 @@ func (p *SimpleParser) Parse(content string) (*model.Node, error) {
 	return s, nil
 }
 
+// VLESSParser VLESS 协议解析器（vless://uuid@host:port?params#name）
+type VLESSParser struct{}
+
+// Parse 解析 VLESS 分享链接。
+func (p *VLESSParser) Parse(content string) (*model.Node, error) {
+	raw := strings.TrimSpace(content)
+	vlessData := strings.TrimPrefix(raw, "vless://")
+
+	name := ""
+	vlessDataWithoutRemark := vlessData
+	if idx := strings.Index(vlessData, "#"); idx != -1 {
+		vlessDataWithoutRemark = vlessData[:idx]
+		name = vlessData[idx+1:]
+		if decodedName, err := url.QueryUnescape(name); err == nil {
+			name = decodedName
+		}
+	}
+
+	userPart, paramPart, _ := strings.Cut(vlessDataWithoutRemark, "?")
+	uuid, addrPort, found := strings.Cut(userPart, "@")
+	if !found {
+		return nil, fmt.Errorf("invalid VLESS format: missing @ separator")
+	}
+	uuid = strings.TrimSpace(uuid)
+	if uuid == "" {
+		return nil, fmt.Errorf("invalid VLESS format: empty uuid")
+	}
+
+	addr, portStr, found := strings.Cut(addrPort, ":")
+	if !found {
+		return nil, fmt.Errorf("invalid VLESS format: missing addr:port")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid VLESS port: %w", err)
+	}
+
+	network := "tcp"
+	security := "none"
+	encryption := "none"
+	var flow, typ, host, path, sni, alpn, fp, pbk, sid, spx string
+	allowInsecure := false
+
+	if paramPart != "" {
+		q, err := url.ParseQuery(paramPart)
+		if err == nil {
+			if v := q.Get("type"); v != "" {
+				network = v
+			}
+			if v := q.Get("security"); v != "" {
+				security = v
+			}
+			if v := q.Get("encryption"); v != "" {
+				encryption = v
+			}
+			flow = q.Get("flow")
+			typ = q.Get("headerType")
+			host = firstNonEmpty(q.Get("host"), q.Get("authority"))
+			path = q.Get("path")
+			if path == "" {
+				path = q.Get("serviceName")
+			}
+			sni = firstNonEmpty(q.Get("sni"), q.Get("serverName"))
+			alpn = q.Get("alpn")
+			fp = q.Get("fp")
+			pbk = q.Get("pbk")
+			sid = q.Get("sid")
+			spx = q.Get("spx")
+			if v := q.Get("allowInsecure"); v == "1" || strings.EqualFold(v, "true") {
+				allowInsecure = true
+			}
+		}
+	}
+
+	if name == "" {
+		name = fmt.Sprintf("VLESS-%s:%d", addr, port)
+	}
+
+	serverID := utils.GenerateServerID(addr, port, uuid)
+	return &model.Node{
+		ID:                 serverID,
+		Name:               name,
+		Addr:               addr,
+		Port:               port,
+		Username:           uuid,
+		Enabled:            true,
+		ProtocolType:       "vless",
+		VLESSUUID:          uuid,
+		VLESSFlow:          flow,
+		VLESSEncryption:    encryption,
+		VLESSNetwork:       network,
+		VLESSType:          typ,
+		VLESSHost:          host,
+		VLESSPath:          path,
+		VLESSSecurity:      security,
+		VLESSSNI:           sni,
+		VLESSALPN:          alpn,
+		VLESSFingerprint:   fp,
+		VLESSPublicKey:     pbk,
+		VLESSShortID:       sid,
+		VLESSSpiderX:       spx,
+		VLESSAllowInsecure: allowInsecure,
+		RawConfig:          raw,
+	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// EnrichNodeFromRawConfig 从分享链接补全协议字段（VLESS/Trojan 等未完全落库时使用）。
+func EnrichNodeFromRawConfig(n *model.Node) {
+	if n == nil || strings.TrimSpace(n.RawConfig) == "" {
+		return
+	}
+	var parser ServerParser
+	switch n.ProtocolType {
+	case "vless":
+		if n.VLESSUUID != "" {
+			return
+		}
+		parser = &VLESSParser{}
+	case "trojan":
+		if n.TrojanSNI != "" || n.TrojanPassword != "" {
+			return
+		}
+		parser = &TrojanParser{}
+	default:
+		return
+	}
+	parsed, err := parser.Parse(n.RawConfig)
+	if err != nil || parsed == nil {
+		return
+	}
+	switch n.ProtocolType {
+	case "vless":
+		n.VLESSUUID = parsed.VLESSUUID
+		n.VLESSFlow = parsed.VLESSFlow
+		n.VLESSEncryption = parsed.VLESSEncryption
+		n.VLESSNetwork = parsed.VLESSNetwork
+		n.VLESSType = parsed.VLESSType
+		n.VLESSHost = parsed.VLESSHost
+		n.VLESSPath = parsed.VLESSPath
+		n.VLESSSecurity = parsed.VLESSSecurity
+		n.VLESSSNI = parsed.VLESSSNI
+		n.VLESSALPN = parsed.VLESSALPN
+		n.VLESSFingerprint = parsed.VLESSFingerprint
+		n.VLESSPublicKey = parsed.VLESSPublicKey
+		n.VLESSShortID = parsed.VLESSShortID
+		n.VLESSSpiderX = parsed.VLESSSpiderX
+		n.VLESSAllowInsecure = parsed.VLESSAllowInsecure
+	case "trojan":
+		n.TrojanPassword = parsed.TrojanPassword
+		n.TrojanSNI = parsed.TrojanSNI
+		n.TrojanAlpn = parsed.TrojanAlpn
+		n.TrojanAllowInsecure = parsed.TrojanAllowInsecure
+		if n.Password == "" {
+			n.Password = parsed.Password
+		}
+	}
+}
+
 // SubscriptionManager 订阅管理器
 // 注意：不再维护订阅列表缓存，数据统一由 Store 管理
 type SubscriptionManager struct {
@@ -455,6 +622,7 @@ func NewSubscriptionManager() *SubscriptionManager {
 	parsers["vmess://"] = &VMessParser{}
 	parsers["ss://"] = &SSParser{}
 	parsers["trojan://"] = &TrojanParser{}
+	parsers["vless://"] = &VLESSParser{}
 	parsers["socks5://"] = &SOCKS5Parser{}
 
 	sm := &SubscriptionManager{
