@@ -17,6 +17,7 @@ import (
 	"myproxy.com/p/internal/service"
 	"myproxy.com/p/internal/store"
 	"myproxy.com/p/internal/systemproxy"
+	"myproxy.com/p/internal/utils"
 )
 
 // proxyModeButtonLayout 自定义布局，确保两个按钮平分宽度
@@ -333,11 +334,13 @@ type MainWindow struct {
 	mainToggleButton *CircularButton          // 主开关按钮（连接/断开，圆形，替代了状态显示）
 	serverNameLabel  *widget.Label            // 服务器名称标签
 	proxyModeButtons [2]*widget.Button        // 系统代理模式按钮组（清除、系统）
+	tunModeCheck     *widget.Check            // TUN 全局模式开关
 	systemProxy      *systemproxy.SystemProxy // 系统代理管理器
 	trafficChart     *TrafficChart            // 实时流量图组件
 
 	// 状态标志
 	systemProxyRestored bool // 标记系统代理状态是否已恢复（避免重复恢复）
+	tunUIUpdating       bool // 程序化更新 TUN Check 时抑制 OnChanged 重入
 
 	proxyOpMu sync.Mutex // 防止并发的代理操作（点击代理开关/系统代理按钮时）
 }
@@ -587,9 +590,19 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	modeInfo := newPaddedWithSize(modeInfoInner, pad)
 
 	// 节点和模式信息垂直排列，占满宽度（留一些边距）
+	if mw.tunModeCheck == nil {
+		mw.tunModeCheck = widget.NewCheck("TUN 全局（游戏/任意端口）", nil)
+		if mw.appState != nil && mw.appState.ConfigService != nil {
+			mw.tunModeCheck.SetChecked(mw.appState.ConfigService.IsTunMode())
+		}
+		mw.tunModeCheck.OnChanged = mw.onTunModeChanged
+	}
+	mw.updateTunModeUI()
+
 	nodeAndMode := newCompactVBox(pad,
 		nodeInfoArea,
 		modeInfo,
+		newPaddedWithSize(mw.tunModeCheck, pad),
 	)
 
 	// 底部：实时流量图
@@ -868,7 +881,95 @@ func (mw *MainWindow) updateHomePortLabel() {
 	if mw == nil || mw.appState == nil || mw.homePortLabel == nil {
 		return
 	}
-	mw.homePortLabel.SetText(fmt.Sprintf("端口 %d", mw.appState.EffectiveLocalInboundPort()))
+	text := fmt.Sprintf("端口 %d", mw.appState.EffectiveLocalInboundPort())
+	if mw.appState.ConfigService != nil && mw.appState.ConfigService.IsTunMode() {
+		text += " · TUN"
+	}
+	mw.homePortLabel.SetText(text)
+}
+
+// onTunModeChanged 首页 TUN 全局开关。
+func (mw *MainWindow) onTunModeChanged(enabled bool) {
+	if mw.tunUIUpdating {
+		return
+	}
+	if mw.appState == nil || mw.appState.ConfigService == nil {
+		return
+	}
+	if !mw.proxyOpMu.TryLock() {
+		mw.setTunCheckSilent(mw.appState.ConfigService.IsTunMode())
+		return
+	}
+	defer mw.proxyOpMu.Unlock()
+
+	if enabled {
+		if err := utils.RequireElevatedForTUN(); err != nil {
+			dialog.ShowError(err, mw.appState.Window)
+			mw.setTunCheckSilent(false)
+			return
+		}
+		if err := utils.EnsureWintunForTUN(); err != nil {
+			dialog.ShowError(err, mw.appState.Window)
+			mw.setTunCheckSilent(false)
+			return
+		}
+		if err := mw.appState.ConfigService.SetProxyMode(service.ProxyModeTUN); err != nil {
+			dialog.ShowError(err, mw.appState.Window)
+			mw.setTunCheckSilent(false)
+			return
+		}
+		// TUN 与系统代理互斥：切到清除
+		_ = mw.applySystemProxyModeCore(SystemProxyModeClear, true)
+		mw.updateProxyModeButtonsState(SystemProxyModeClear)
+		mw.appState.AppendLog("INFO", "app", "已启用 TUN 全局模式（任意端口流量经虚拟网卡）")
+	} else {
+		if err := mw.appState.ConfigService.SetProxyMode(service.ProxyModeSystem); err != nil {
+			dialog.ShowError(err, mw.appState.Window)
+			mw.setTunCheckSilent(true)
+			return
+		}
+		mw.appState.AppendLog("INFO", "app", "已关闭 TUN，恢复系统代理模式")
+	}
+
+	mw.updateTunModeUI()
+	mw.updateHomePortLabel()
+
+	// 代理运行中切换模式需重建 xray 配置
+	if mw.appState.XrayInstance != nil && mw.appState.XrayInstance.IsRunning() {
+		mw.appState.AppendLog("INFO", "app", "代理运行中，正在按新模式重启…")
+		mw.stopProxy()
+		mw.startProxy()
+		mw.refreshHomePageStatus()
+	}
+}
+
+// setTunCheckSilent 程序化设置 TUN Check，不触发 onTunModeChanged。
+func (mw *MainWindow) setTunCheckSilent(checked bool) {
+	if mw.tunModeCheck == nil {
+		return
+	}
+	mw.tunUIUpdating = true
+	mw.tunModeCheck.SetChecked(checked)
+	mw.tunUIUpdating = false
+}
+
+// updateTunModeUI 根据 TUN 状态更新系统代理按钮可用性。
+func (mw *MainWindow) updateTunModeUI() {
+	tunOn := mw.appState != nil && mw.appState.ConfigService != nil && mw.appState.ConfigService.IsTunMode()
+	if mw.tunModeCheck != nil && mw.tunModeCheck.Checked != tunOn {
+		mw.setTunCheckSilent(tunOn)
+	}
+	for i, btn := range mw.proxyModeButtons {
+		if btn == nil {
+			continue
+		}
+		if tunOn && i == 1 {
+			// TUN 开启时禁用「系统代理」按钮
+			btn.Disable()
+		} else {
+			btn.Enable()
+		}
+	}
 }
 
 // truncateDisplayText 将文本截断到指定 rune 数，并在末尾追加省略号。
@@ -959,7 +1060,8 @@ func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) error {
 	}
 
 	// 入站端口就绪后，若当前配置为「系统」则重新套用（含终端/Git，由其各自开关决定），不写回 Store。
-	if mw.appState.ConfigService != nil {
+	// TUN 全局模式下不写系统代理，避免与虚拟网卡路由冲突。
+	if mw.appState.ConfigService != nil && !mw.appState.ConfigService.IsTunMode() {
 		persisted := ParseSystemProxyMode(mw.appState.ConfigService.GetSystemProxyMode())
 		if persisted == SystemProxyModeAuto {
 			_ = mw.applySystemProxyModeCore(SystemProxyModeAuto, false)
@@ -970,6 +1072,9 @@ func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) error {
 		selectedNode := mw.appState.Store.Nodes.GetSelected()
 		if selectedNode != nil {
 			message := fmt.Sprintf("代理已启动\n节点: %s\n端口: %d", selectedNode.Name, result.XrayInstance.GetPort())
+			if mw.appState.ConfigService != nil && mw.appState.ConfigService.IsTunMode() {
+				message += "\n模式: TUN 全局"
+			}
 			dialog.ShowInformation("代理启动成功", message, mw.appState.Window)
 		}
 	}
@@ -1379,6 +1484,10 @@ func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore
 // 直接调用 systemproxy 方法设置系统代理，不启动代理
 func (mw *MainWindow) onProxyModeButtonClicked(mode SystemProxyMode) {
 	if mw.appState == nil {
+		return
+	}
+	if mode == SystemProxyModeAuto && mw.appState.ConfigService != nil && mw.appState.ConfigService.IsTunMode() {
+		dialog.ShowInformation("提示", "已启用 TUN 全局模式，无需再开系统代理。如需系统代理请先关闭 TUN。", mw.appState.Window)
 		return
 	}
 

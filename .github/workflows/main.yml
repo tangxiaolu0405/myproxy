@@ -18,7 +18,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.0"
+          go-version: "1.26.x"
           cache: true
 
       - name: Generate Icon.png
@@ -120,6 +120,11 @@ jobs:
           #   fyne-cross/dist/linux-amd64/LProxy.tar.xz
           # 归一命名对齐 cata：LProxy-<os>-<arch>.<ext>
           shopt -s nullglob
+
+          # Windows TUN 需要 wintun.dll，打进 zip
+          bash scripts/fetch-wintun.sh
+          WINTUN_DLL="third_party/wintun/wintun.dll"
+
           pack_platform() {
             local os="$1" arch="$2"
             local dir="fyne-cross/dist/${os}-${arch}"
@@ -146,8 +151,18 @@ jobs:
               *) echo "unsupported archive: $f" >&2; return 1 ;;
             esac
             out="release-assets/LProxy-${os}-${arch}.${ext}"
-            cp -f "$f" "$out"
-            echo "asset: $out (from $f)"
+            if [ "$os" = "windows" ] && [ -f "$WINTUN_DLL" ] && [ "$ext" = "zip" ]; then
+              tmp="$(mktemp -d)"
+              unzip -q "$f" -d "$tmp"
+              cp -f "$WINTUN_DLL" "$tmp/wintun.dll"
+              abs_out="$(pwd)/$out"
+              (cd "$tmp" && zip -qr "$abs_out" .)
+              rm -rf "$tmp"
+              echo "asset: $out (from $f + wintun.dll)"
+            else
+              cp -f "$f" "$out"
+              echo "asset: $out (from $f)"
+            fi
           }
           pack_platform windows amd64
           pack_platform linux amd64

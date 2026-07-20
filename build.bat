@@ -48,10 +48,51 @@ go build -ldflags="-s -w -X main.version=%VERSION%" -o "%BUILD_DIR%\%OS%-%ARCH%\
 
 if %errorlevel% equ 0 (
     echo [INFO] ✓ %OS%/%ARCH% 构建成功: %BUILD_DIR%\%OS%-%ARCH%\%OUTPUT_NAME%
+    if /i "%OS%"=="windows" (
+        call :ensure_wintun
+        if exist "third_party\wintun\wintun.dll" (
+            copy /y "third_party\wintun\wintun.dll" "%BUILD_DIR%\%OS%-%ARCH%\wintun.dll" >nul
+            echo [INFO] 已复制 wintun.dll 到 %BUILD_DIR%\%OS%-%ARCH%\
+        ) else (
+            echo [WARN] 未找到 third_party\wintun\wintun.dll，TUN 模式将不可用
+        )
+    )
 ) else (
     echo [ERROR] ✗ %OS%/%ARCH% 构建失败
     exit /b 1
 )
+goto :eof
+
+:ensure_wintun
+if exist "third_party\wintun\wintun.dll" goto :eof
+echo [INFO] 下载 wintun.dll ...
+where curl >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [WARN] 未找到 curl，请手动将 wintun.dll 放到 third_party\wintun\
+    goto :eof
+)
+where tar >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [WARN] 未找到 tar，请手动将 wintun.dll 放到 third_party\wintun\
+    goto :eof
+)
+if not exist "third_party\wintun" mkdir "third_party\wintun"
+curl -fsSL "https://www.wintun.net/builds/wintun-0.14.1.zip" -o "%TEMP%\wintun.zip"
+if %errorlevel% neq 0 (
+    echo [WARN] 下载 wintun 失败
+    goto :eof
+)
+if exist "%TEMP%\wintun-extract" rmdir /s /q "%TEMP%\wintun-extract"
+mkdir "%TEMP%\wintun-extract"
+tar -xf "%TEMP%\wintun.zip" -C "%TEMP%\wintun-extract"
+for /r "%TEMP%\wintun-extract" %%f in (wintun.dll) do (
+    if /i "%%~nxf"=="wintun.dll" (
+        copy /y "%%f" "third_party\wintun\wintun.dll" >nul
+        echo [INFO] 已下载 wintun.dll
+        goto :eof
+    )
+)
+echo [WARN] 压缩包中未找到 wintun.dll
 goto :eof
 
 :main

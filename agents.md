@@ -2,11 +2,11 @@
 
 ## 项目信息
 
-- 语言: Go 1.25.4+
+- 语言: Go 1.26+
 - 模块: myproxy.com/p
 - UI: Fyne v2.7.1
 - 数据库: SQLite3
-- 核心: xray-core v1.251208.0
+- 核心: xray-core v26.7.11（go.mod 伪版本，因上游未使用 /v26 模块路径）
 - 入口: cmd/gui/main.go
 
 ## 项目结构

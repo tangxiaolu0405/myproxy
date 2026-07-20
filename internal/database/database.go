@@ -45,6 +45,8 @@ var defaultAppConfigEntries = map[string]string{
 	"terminalProxyEnabled":       "false",
 	"gitProxyEnabled":            "false",
 	"proxyType":                  "socks5",
+	// proxyMode: system=系统代理模式（默认）；tun=TUN 全局抓包（需管理员/wintun）
+	"proxyMode":                  "system",
 	// mixedInboundListenAll=true 时 xray 混合入站监听 0.0.0.0，便于 WSL2 等通过 Windows 主机 IP 访问；本机系统代理仍写 127.0.0.1。
 	"mixedInboundListenAll":      "false",
 	"directRoutes":             "",

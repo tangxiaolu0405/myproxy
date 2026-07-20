@@ -222,6 +222,49 @@ func (cs *ConfigService) SetSystemProxyMode(mode string) error {
 	return cs.store.AppConfig.Set("systemProxyMode", mode)
 }
 
+// ProxyModeSystem 系统代理模式（默认）：依赖 OS 系统代理 / 本地 mixed 入站。
+const ProxyModeSystem = "system"
+
+// ProxyModeTUN TUN 全局模式：xray tun 入站 + 系统路由。
+const ProxyModeTUN = "tun"
+
+// GetProxyMode 获取代理抓取模式（system / tun）。
+func (cs *ConfigService) GetProxyMode() string {
+	def := database.AppConfigBuiltinDefault("proxyMode")
+	if def == "" {
+		def = ProxyModeSystem
+	}
+	if cs.store == nil || cs.store.AppConfig == nil {
+		return def
+	}
+	mode, err := cs.store.AppConfig.GetWithDefault("proxyMode", def)
+	if err != nil {
+		return def
+	}
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == ProxyModeTUN {
+		return ProxyModeTUN
+	}
+	return ProxyModeSystem
+}
+
+// IsTunMode 是否启用 TUN 全局模式。
+func (cs *ConfigService) IsTunMode() bool {
+	return cs.GetProxyMode() == ProxyModeTUN
+}
+
+// SetProxyMode 设置代理抓取模式（system / tun）。
+func (cs *ConfigService) SetProxyMode(mode string) error {
+	if cs.store == nil || cs.store.AppConfig == nil {
+		return fmt.Errorf("Store 未初始化")
+	}
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode != ProxyModeTUN {
+		mode = ProxyModeSystem
+	}
+	return cs.store.AppConfig.Set("proxyMode", mode)
+}
+
 // Get 获取配置值。
 // 参数：
 //   - key: 配置键

@@ -9,12 +9,14 @@ import (
 
 	// 导入所有 xray-core 组件，注册必要的处理器
 	_ "github.com/xtls/xray-core/main/distro/all"
+	// distro/all 尚未包含 tun，需单独注册（TUN 全局入站）
+	_ "github.com/xtls/xray-core/proxy/tun"
 
 	"github.com/xtls/xray-core/app/log"
+	clog "github.com/xtls/xray-core/common/log"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/stats"
 	"github.com/xtls/xray-core/infra/conf"
-	clog "github.com/xtls/xray-core/common/log"
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/model"
 )
@@ -689,7 +691,8 @@ type RoutingOptions struct {
 //   - server: 服务器配置，用于创建出站配置
 //   - logFilePath: 日志文件路径（可选，为空则不设置）
 //   - routing: 路由选项（可选，nil 则仅使用内置规则）
-func CreateXrayConfig(localPort int, listenHost string, server *model.Node, logFilePath string, routing *RoutingOptions) ([]byte, error) {
+//   - enableTun: 是否启用 TUN 全局入站（与 mixed 入站并存；需管理员/wintun）
+func CreateXrayConfig(localPort int, listenHost string, server *model.Node, logFilePath string, routing *RoutingOptions, enableTun bool) ([]byte, error) {
 	if localPort == 0 {
 		localPort = database.DefaultMixedInboundPort
 	}
@@ -707,6 +710,27 @@ func CreateXrayConfig(localPort int, listenHost string, server *model.Node, logF
 			"auth": "noauth",
 			"udp":  true,
 		},
+	}
+
+	inbounds := []interface{}{inbound}
+	if enableTun {
+		autoIface := "auto"
+		inbounds = append(inbounds, map[string]interface{}{
+			"tag":      "tun-in",
+			"protocol": "tun",
+			"settings": map[string]interface{}{
+				"name":                   "xray0",
+				"mtu":                    1500,
+				"gateway":                []string{"10.0.0.1/16", "fc00::1/64"},
+				"dns":                    []string{"1.1.1.1", "8.8.8.8"},
+				"autoSystemRoutingTable": []string{"0.0.0.0/0", "::/0"},
+				"autoOutboundsInterface": autoIface,
+			},
+			"sniffing": map[string]interface{}{
+				"enabled":      true,
+				"destOverride": []string{"http", "tls", "quic"},
+			},
+		})
 	}
 
 	// 创建出站配置
@@ -742,9 +766,9 @@ func CreateXrayConfig(localPort int, listenHost string, server *model.Node, logF
 	// 构建完整配置
 	config := map[string]interface{}{
 		"log":       logConfig,
-		"stats":    map[string]interface{}{},
-		"policy":   policyConfig,
-		"inbounds":  []interface{}{inbound},
+		"stats":     map[string]interface{}{},
+		"policy":    policyConfig,
+		"inbounds":  inbounds,
 		"outbounds": []interface{}{outbound, directOutbound},
 		"routing": map[string]interface{}{
 			"rules":          rules,

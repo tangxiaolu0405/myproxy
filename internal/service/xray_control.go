@@ -5,6 +5,7 @@ import (
 
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/store"
+	"myproxy.com/p/internal/utils"
 	"myproxy.com/p/internal/xray"
 )
 
@@ -104,8 +105,32 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 		listenHost = xcs.config.GetMixedInboundXrayListenAddress()
 	}
 
+	enableTun := xcs.config != nil && xcs.config.IsTunMode()
+	if enableTun {
+		if err := utils.RequireElevatedForTUN(); err != nil {
+			logMsg := err.Error()
+			if xcs.logCallback != nil {
+				xcs.logCallback("ERROR", logMsg)
+			}
+			return &StartProxyResult{
+				LogMessage: logMsg,
+				Error:      fmt.Errorf("Xray控制服务: %w", err),
+			}
+		}
+		if err := utils.EnsureWintunForTUN(); err != nil {
+			logMsg := err.Error()
+			if xcs.logCallback != nil {
+				xcs.logCallback("ERROR", logMsg)
+			}
+			return &StartProxyResult{
+				LogMessage: logMsg,
+				Error:      fmt.Errorf("Xray控制服务: %w", err),
+			}
+		}
+	}
+
 	// 创建 xray 配置（不设日志路径，由劫持 handler 落盘）
-	xrayConfigJSON, err := xray.CreateXrayConfig(proxyPort, listenHost, selectedNode, "", routing)
+	xrayConfigJSON, err := xray.CreateXrayConfig(proxyPort, listenHost, selectedNode, "", routing, enableTun)
 	if err != nil {
 		logMsg := fmt.Sprintf("创建xray配置失败: %v", err)
 		if xcs.logCallback != nil {
