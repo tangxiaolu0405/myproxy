@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -134,6 +135,11 @@ func (p *DarwinProxy) getNetworkServices() ([]string, error) {
 	return services, nil
 }
 
+const (
+	myproxyProxyScriptName = ".myproxy_proxy.sh"
+	myproxyShellMarker     = "# Source myproxy proxy settings"
+)
+
 // setupExternalShellFile 使用外部shell文件方案设置代理
 // 方案：在 ~/.myproxy_proxy.sh 中定义代理环境变量，然后在 shell 配置文件中 source 它
 func (p *DarwinProxy) setupExternalShellFile(proxyURL string) error {
@@ -143,7 +149,7 @@ func (p *DarwinProxy) setupExternalShellFile(proxyURL string) error {
 	}
 
 	// 1. 创建外部代理配置文件
-	proxyFile := fmt.Sprintf("%s/.myproxy_proxy.sh", homeDir)
+	proxyFile := filepath.Join(homeDir, myproxyProxyScriptName)
 	configContent := fmt.Sprintf(`# Proxy settings (set by myproxy)
 # This file is managed by myproxy. Do not edit manually.
 
@@ -159,7 +165,7 @@ export all_proxy=%s
 		return fmt.Errorf("写入代理配置文件失败: %v", err)
 	}
 
-	// 2. 在 shell 配置文件中添加 source 语句（如果不存在）
+	// 2. 在 shell 配置文件中添加 source 语句（幂等：先清旧块再写一块）
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/zsh"
@@ -167,40 +173,31 @@ export all_proxy=%s
 
 	var configFile string
 	if strings.Contains(shell, "zsh") {
-		configFile = fmt.Sprintf("%s/.zshrc", homeDir)
+		configFile = filepath.Join(homeDir, ".zshrc")
 	} else if strings.Contains(shell, "bash") {
-		configFile = fmt.Sprintf("%s/.bashrc", homeDir)
+		configFile = filepath.Join(homeDir, ".bashrc")
 	} else {
 		return fmt.Errorf("不支持的 shell: %s", shell)
 	}
 
-	// 读取现有配置
 	content, err := os.ReadFile(configFile)
-	if err != nil {
-		content = []byte{}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("读取 shell 配置失败: %v", err)
 	}
 
-	contentStr := string(content)
-	sourceLine := fmt.Sprintf("source %s", proxyFile)
+	sourceLine := "source " + proxyFile
+	// 先清掉历史标记/source（含孤立的重复注释），再写入唯一一块，保证幂等
+	cleaned := stripMyproxyShellHooks(string(content))
 
-	// 检查是否已经存在 source 语句
-	if strings.Contains(contentStr, sourceLine) {
-		return nil // 已经配置过了
-	}
-
-	// 检查是否已经存在 myproxy 相关的 source（可能路径不同）
-	if strings.Contains(contentStr, ".myproxy_proxy.sh") {
-		// 已经存在，但可能路径不同，先移除旧的
-		contentStr = p.removeOldSourceLine(contentStr)
-	}
-
-	// 追加 source 语句
-	newContent := contentStr
+	newContent := cleaned
 	if len(newContent) > 0 && !strings.HasSuffix(newContent, "\n") {
 		newContent += "\n"
 	}
-	newContent += fmt.Sprintf("# Source myproxy proxy settings\n%s\n", sourceLine)
+	newContent += myproxyShellMarker + "\n" + sourceLine + "\n"
 
+	if newContent == string(content) {
+		return nil
+	}
 	return os.WriteFile(configFile, []byte(newContent), 0644)
 }
 
@@ -212,10 +209,10 @@ func (p *DarwinProxy) removeExternalShellFile() error {
 	}
 
 	// 1. 删除外部代理配置文件
-	proxyFile := fmt.Sprintf("%s/.myproxy_proxy.sh", homeDir)
+	proxyFile := filepath.Join(homeDir, myproxyProxyScriptName)
 	_ = os.Remove(proxyFile) // 忽略错误，文件可能不存在
 
-	// 2. 从 shell 配置文件中移除 source 语句
+	// 2. 从 shell 配置文件中移除 source 语句与标记注释
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/zsh"
@@ -223,9 +220,9 @@ func (p *DarwinProxy) removeExternalShellFile() error {
 
 	var configFile string
 	if strings.Contains(shell, "zsh") {
-		configFile = fmt.Sprintf("%s/.zshrc", homeDir)
+		configFile = filepath.Join(homeDir, ".zshrc")
 	} else if strings.Contains(shell, "bash") {
-		configFile = fmt.Sprintf("%s/.bashrc", homeDir)
+		configFile = filepath.Join(homeDir, ".bashrc")
 	} else {
 		return nil
 	}
@@ -236,9 +233,8 @@ func (p *DarwinProxy) removeExternalShellFile() error {
 	}
 
 	contentStr := string(content)
-	newContent := p.removeOldSourceLine(contentStr)
+	newContent := stripMyproxyShellHooks(contentStr)
 
-	// 如果内容有变化，写回文件
 	if newContent != contentStr {
 		return os.WriteFile(configFile, []byte(newContent), 0644)
 	}
@@ -246,37 +242,31 @@ func (p *DarwinProxy) removeExternalShellFile() error {
 	return nil
 }
 
-// removeOldSourceLine 从配置文件中移除旧的 source 语句
-func (p *DarwinProxy) removeOldSourceLine(content string) string {
+// stripMyproxyShellHooks 移除 myproxy 写入的标记注释与 source 行（含历史遗留的孤立注释）。
+func stripMyproxyShellHooks(content string) string {
 	lines := strings.Split(content, "\n")
-	var newLines []string
-	skipNext := false
-
-	for i, line := range lines {
-		// 跳过包含 .myproxy_proxy.sh 的 source 行
-		if strings.Contains(line, ".myproxy_proxy.sh") {
-			// 检查是否是注释行
-			if strings.HasPrefix(strings.TrimSpace(line), "#") {
-				// 如果是注释，检查下一行是否是 source
-				if i+1 < len(lines) && strings.Contains(lines[i+1], "source") && strings.Contains(lines[i+1], ".myproxy_proxy.sh") {
-					skipNext = true
-					continue
-				}
-			} else if strings.Contains(line, "source") {
-				// 直接是 source 行，跳过
-				continue
-			}
-		}
-
-		// 如果上一行是注释且这一行是 source，跳过
-		if skipNext && strings.Contains(line, "source") {
-			skipNext = false
+	newLines := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == myproxyShellMarker {
 			continue
 		}
-		skipNext = false
-
+		// 兼容旧注释变体
+		if strings.HasPrefix(trimmed, "# Source myproxy") {
+			continue
+		}
+		if strings.Contains(line, myproxyProxyScriptName) && strings.Contains(line, "source") {
+			continue
+		}
 		newLines = append(newLines, line)
 	}
 
-	return strings.Join(newLines, "\n")
+	// 去掉因删除产生的文件末尾多余空行（最多保留一个换行语义由 Join 处理）
+	for len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) == "" {
+		newLines = newLines[:len(newLines)-1]
+	}
+	if len(newLines) == 0 {
+		return ""
+	}
+	return strings.Join(newLines, "\n") + "\n"
 }
