@@ -4,16 +4,17 @@ data/diagnostics/
 myproxy.db
 *.db
 
-# Go 编译文件
+# Go 编译文件（根目录产物名，勿匹配 cmd/gui 等源码路径）
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-gui
-client
-server
-myproxy
+/main
+/gui
+/client
+/server
+/myproxy
 
 # Go 测试文件
 *.test
@@ -73,10 +74,6 @@ out/
 
 # 工具生成的临时目录
 .trae/
-
-# 本项目特殊忽略
-main
-gui
 
 # 任务清单仅本地维护，不纳入版本库（远端已删除跟踪）
 todo.md

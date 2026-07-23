@@ -125,11 +125,11 @@ call :build_target windows amd64 .exe
 call :build_target windows 386 .exe
 call :build_target linux amd64 ""
 call :build_target linux arm64 ""
-call :build_target darwin amd64 ""
-call :build_target darwin arm64 ""
+echo [WARN] 跳过 macOS：Windows 主机无法可靠交叉编译 Fyne darwin 目标
+echo [INFO] 请在 macOS 上运行 ./build.sh mac，或使用 CI build-macos job
 
 echo.
-echo [INFO] 所有构建完成！
+echo [INFO] 构建完成！
 goto :end
 
 :build_windows
@@ -145,10 +145,9 @@ call :build_target linux arm64 ""
 goto :end
 
 :build_mac
-echo [INFO] 构建 macOS 平台...
-call :build_target darwin amd64 ""
-call :build_target darwin arm64 ""
-goto :end
+echo [ERROR] Fyne macOS 构建需要在 macOS 主机上执行（需要 CGO + macOS SDK）
+echo [INFO] 请在 macOS 上运行 ./build.sh mac，或由 GitHub Actions 的 build-macos job 打包
+exit /b 1
 
 :help
 echo 用法: %0 [平台]
