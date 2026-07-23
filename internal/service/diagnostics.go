@@ -19,6 +19,7 @@ import (
 
 	"myproxy.com/p/internal/model"
 	"myproxy.com/p/internal/store"
+	"myproxy.com/p/internal/utils"
 )
 
 const (
@@ -411,11 +412,11 @@ func (ds *DiagnosticsService) getDiagnosticsDir() string {
 		}
 	}
 
-	workDir, err := os.Getwd()
+	dir, err := utils.ResolveUnderDataDir(defaultDiagnosticsDirName)
 	if err != nil {
 		return filepath.Join("data", defaultDiagnosticsDirName)
 	}
-	return filepath.Join(workDir, "data", defaultDiagnosticsDirName)
+	return dir
 }
 
 // CleanupOldExports 删除诊断目录中超过 maxAge 的导出文件（.pprof / .json / .svg）。

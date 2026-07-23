@@ -214,6 +214,10 @@ func (a *AppState) InitLogger() error {
 			logLevel = level
 		}
 	}
+	// 相对路径落到 DataDir，避免 .app 双击时 cwd 为 / 导致日志散落
+	if resolved, err := utils.ResolveUnderDataDir(logFile); err == nil {
+		logFile = resolved
+	}
 
 	logger, err := logging.NewLogger(logFile, logLevel == "debug", logLevel, logCallback)
 	if err != nil {

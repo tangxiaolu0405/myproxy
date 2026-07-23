@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/ui"
+	"myproxy.com/p/internal/utils"
 )
 
 func main() {
@@ -24,12 +24,12 @@ func main() {
 }
 
 func initDatabase() error {
-	workDir, err := os.Getwd()
+	dbPath, err := utils.DBPath()
 	if err != nil {
-		return fmt.Errorf("获取工作目录失败: %w", err)
+		return fmt.Errorf("解析数据目录失败: %w", err)
 	}
+	log.Printf("数据目录: %s", filepath.Dir(dbPath))
 
-	dbPath := filepath.Join(workDir, "data", "myproxy.db")
 	if err := database.InitDB(dbPath); err != nil {
 		return fmt.Errorf("初始化数据库失败: %w", err)
 	}
