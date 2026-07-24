@@ -115,6 +115,17 @@ go build -o myproxy ./cmd/gui
 - **Windows**: 通过注册表 / WinINet 配置系统代理
 - **Linux**: GNOME（gsettings）、KDE（kwriteconfig）及终端环境变量代理
 
+#### macOS 安装与首次运行
+
+从 GitHub Release 下载的 `LProxy-darwin-*.zip` 解压后为 `LProxy.app`。若双击提示无法打开（隔离属性），在终端执行：
+
+```bash
+xattr -r -d com.apple.quarantine LProxy.app
+open LProxy.app
+```
+
+Apple Silicon 选 `LProxy-darwin-arm64.zip`，Intel 选 `LProxy-darwin-amd64.zip`。
+
 ### ⚙️ 配置说明
 
 | 配置项 | 说明 | 默认值 |
@@ -290,6 +301,17 @@ While the proxy is running, you can optionally enable system proxy:
 - **macOS**: Automatically configure system network settings
 - **Windows**: Configure system proxy via registry / WinINet
 - **Linux**: GNOME (gsettings), KDE (kwriteconfig), and terminal environment proxy
+
+#### macOS Install & First Launch
+
+Release zips unpack to `LProxy.app`. If macOS blocks it (quarantine), run:
+
+```bash
+xattr -r -d com.apple.quarantine LProxy.app
+open LProxy.app
+```
+
+Use `LProxy-darwin-arm64.zip` on Apple Silicon, `LProxy-darwin-amd64.zip` on Intel.
 
 ### ⚙️ Configuration
 

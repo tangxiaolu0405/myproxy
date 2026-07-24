@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -786,14 +787,21 @@ func (sp *SettingsPage) buildAboutContent() fyne.CanvasObject {
 	emailLabel := widget.NewLabel("联系邮箱: lucastq1019@gmail.com")
 	emailLabel.Wrapping = fyne.TextWrapWord
 
-	return container.NewVBox(
+	items := []fyne.CanvasObject{
 		titleLabel,
 		widget.NewSeparator(),
 		versionLabel,
 		descLabel,
 		featureLabel,
 		emailLabel,
-	)
+	}
+	if runtime.GOOS == "darwin" {
+		macHint := widget.NewLabel("macOS：若无法打开下载的 LProxy.app，请在终端执行：\nxattr -r -d com.apple.quarantine LProxy.app")
+		macHint.Wrapping = fyne.TextWrapWord
+		items = append(items, widget.NewSeparator(), macHint)
+	}
+
+	return container.NewVBox(items...)
 }
 
 // onThemeChanged 主题变更回调。

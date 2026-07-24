@@ -363,6 +363,16 @@ jobs:
             echo "- Linux: \`LProxy-linux-amd64.tar.xz\`"
             echo "- macOS: \`LProxy-darwin-arm64.zip\` / \`LProxy-darwin-amd64.zip\`（解压后为 LProxy.app）"
             echo
+            echo "### macOS 首次运行"
+            echo
+            echo "从浏览器下载的 zip/\`.app\` 会带隔离属性，需先信任后再打开："
+            echo
+            echo '```bash'
+            echo "unzip LProxy-darwin-arm64.zip   # 或 amd64"
+            echo "xattr -r -d com.apple.quarantine LProxy.app"
+            echo "open LProxy.app"
+            echo '```'
+            echo
             echo '```bash'
             if [ -f artifacts/LProxy-linux-amd64.tar.xz ]; then
               echo "tar -xJf LProxy-linux-amd64.tar.xz   # 解压后运行包内二进制"
@@ -371,12 +381,6 @@ jobs:
             fi
             if [ -f artifacts/LProxy-windows-amd64.zip ]; then
               echo "unzip LProxy-windows-amd64.zip && LProxy.exe"
-            fi
-            if [ -f artifacts/LProxy-darwin-arm64.zip ]; then
-              echo "unzip LProxy-darwin-arm64.zip && open LProxy.app"
-            fi
-            if [ -f artifacts/LProxy-darwin-amd64.zip ]; then
-              echo "unzip LProxy-darwin-amd64.zip && open LProxy.app"
             fi
             echo '```'
           } > release_notes.md
