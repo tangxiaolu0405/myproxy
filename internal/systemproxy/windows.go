@@ -129,12 +129,7 @@ func (p *WindowsProxy) SetTerminalProxy(host string, port int, proxyType string)
 	proxyURL := TerminalProxyURL(host, port, proxyType)
 
 	// 1. 设置当前进程环境变量（立即生效）
-	os.Setenv("HTTP_PROXY", proxyURL)
-	os.Setenv("HTTPS_PROXY", proxyURL)
-	os.Setenv("http_proxy", proxyURL)
-	os.Setenv("https_proxy", proxyURL)
-	os.Setenv("ALL_PROXY", proxyURL)
-	os.Setenv("all_proxy", proxyURL)
+	applyTerminalProxyEnv(proxyURL)
 	os.Setenv("NO_PROXY", windowsTerminalNoProxy)
 	os.Setenv("no_proxy", windowsTerminalNoProxy)
 
@@ -152,14 +147,13 @@ func (p *WindowsProxy) SetTerminalProxy(host string, port int, proxyType string)
 	defer envKey.Close()
 
 	// 设置用户环境变量（持久化）
-	_ = envKey.SetStringValue("HTTP_PROXY", proxyURL)
-	_ = envKey.SetStringValue("HTTPS_PROXY", proxyURL)
-	_ = envKey.SetStringValue("http_proxy", proxyURL)
-	_ = envKey.SetStringValue("https_proxy", proxyURL)
-	_ = envKey.SetStringValue("ALL_PROXY", proxyURL)
-	_ = envKey.SetStringValue("all_proxy", proxyURL)
-	_ = envKey.SetStringValue("NO_PROXY", windowsTerminalNoProxy)
-	_ = envKey.SetStringValue("no_proxy", windowsTerminalNoProxy)
+	for _, key := range terminalProxyEnvVars {
+		if key == "NO_PROXY" || key == "no_proxy" {
+			_ = envKey.SetStringValue(key, windowsTerminalNoProxy)
+			continue
+		}
+		_ = envKey.SetStringValue(key, proxyURL)
+	}
 
 	return notifyWindowsEnvironmentChanged()
 }
@@ -167,14 +161,7 @@ func (p *WindowsProxy) SetTerminalProxy(host string, port int, proxyType string)
 // ClearTerminalProxy 清除终端代理设置
 func (p *WindowsProxy) ClearTerminalProxy() error {
 	// 1. 清除当前进程环境变量
-	os.Unsetenv("HTTP_PROXY")
-	os.Unsetenv("HTTPS_PROXY")
-	os.Unsetenv("http_proxy")
-	os.Unsetenv("https_proxy")
-	os.Unsetenv("ALL_PROXY")
-	os.Unsetenv("all_proxy")
-	os.Unsetenv("NO_PROXY")
-	os.Unsetenv("no_proxy")
+	clearTerminalProxyEnv()
 
 	// 2. 从用户环境变量中删除（持久化清除）
 	envKey, err := registry.OpenKey(
@@ -189,14 +176,9 @@ func (p *WindowsProxy) ClearTerminalProxy() error {
 	defer envKey.Close()
 
 	// 删除用户环境变量
-	_ = envKey.DeleteValue("HTTP_PROXY")
-	_ = envKey.DeleteValue("HTTPS_PROXY")
-	_ = envKey.DeleteValue("http_proxy")
-	_ = envKey.DeleteValue("https_proxy")
-	_ = envKey.DeleteValue("ALL_PROXY")
-	_ = envKey.DeleteValue("all_proxy")
-	_ = envKey.DeleteValue("NO_PROXY")
-	_ = envKey.DeleteValue("no_proxy")
+	for _, key := range terminalProxyEnvVars {
+		_ = envKey.DeleteValue(key)
+	}
 
 	return notifyWindowsEnvironmentChanged()
 }

@@ -70,22 +70,12 @@ func (p *LinuxProxy) SetSystemProxy(host string, port int) error {
 
 func (p *LinuxProxy) SetTerminalProxy(host string, port int, proxyType string) error {
 	proxyURL := TerminalProxyURL(host, port, proxyType)
-	os.Setenv("HTTP_PROXY", proxyURL)
-	os.Setenv("HTTPS_PROXY", proxyURL)
-	os.Setenv("http_proxy", proxyURL)
-	os.Setenv("https_proxy", proxyURL)
-	os.Setenv("ALL_PROXY", proxyURL)
-	os.Setenv("all_proxy", proxyURL)
+	applyTerminalProxyEnv(proxyURL)
 	return nil
 }
 
 func (p *LinuxProxy) ClearTerminalProxy() error {
-	os.Unsetenv("HTTP_PROXY")
-	os.Unsetenv("HTTPS_PROXY")
-	os.Unsetenv("http_proxy")
-	os.Unsetenv("https_proxy")
-	os.Unsetenv("ALL_PROXY")
-	os.Unsetenv("all_proxy")
+	clearTerminalProxyEnv()
 	return nil
 }
 

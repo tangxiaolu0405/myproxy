@@ -1385,10 +1385,8 @@ func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore
 	switch mode {
 	case SystemProxyModeClear:
 		err = mw.systemProxy.ClearSystemProxy()
-		shouldClearTerminal := false
 		shouldClearGit := false
 		if mw.appState != nil && mw.appState.ConfigService != nil {
-			shouldClearTerminal = mw.appState.ConfigService.GetTerminalProxyEnabled()
 			shouldClearGit = mw.appState.ConfigService.GetGitProxyEnabled()
 		}
 		if err == nil {
@@ -1396,16 +1394,15 @@ func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore
 		} else {
 			logMessage = fmt.Sprintf("清除系统代理失败: %v", err)
 		}
-		if shouldClearTerminal {
-			terminalErr := mw.systemProxy.ClearTerminalProxy()
-			if terminalErr != nil {
-				logMessage += fmt.Sprintf("；清除环境变量代理失败: %v", terminalErr)
-				if err == nil {
-					err = terminalErr
-				}
-			} else {
-				logMessage += "；已清除环境变量代理"
+		// 始终清除终端代理：不依赖「终端代理」开关，避免开关关闭后残留 shell 钩子/环境变量
+		terminalErr := mw.systemProxy.ClearTerminalProxy()
+		if terminalErr != nil {
+			logMessage += fmt.Sprintf("；清除环境变量代理失败: %v", terminalErr)
+			if err == nil {
+				err = terminalErr
 			}
+		} else {
+			logMessage += "；已清除环境变量代理"
 		}
 		if shouldClearGit {
 			gitErr := mw.systemProxy.ClearGitProxy()
@@ -1441,6 +1438,10 @@ func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore
 				} else {
 					logMessage += fmt.Sprintf("；设置环境变量代理失败: %v", terminalErr)
 				}
+			} else if clearErr := mw.systemProxy.ClearTerminalProxy(); clearErr != nil {
+				logMessage += fmt.Sprintf("；清除环境变量代理失败: %v", clearErr)
+			} else {
+				logMessage += "；已清除环境变量代理"
 			}
 			if shouldSetGit {
 				gitErr := mw.systemProxy.SetGitProxy(proxyType)
@@ -1623,16 +1624,13 @@ func (mw *MainWindow) ReapplyPersistedSystemProxyFromConfig() error {
 		return nil
 	}
 	mode := ParseSystemProxyMode(modeStr)
-	if mode != SystemProxyModeAuto {
-		return nil
-	}
 
 	go func() {
 		if !mw.proxyOpMu.TryLock() {
 			return
 		}
 		defer mw.proxyOpMu.Unlock()
-		_ = mw.applySystemProxyModeCore(SystemProxyModeAuto, false)
+		_ = mw.applySystemProxyModeCore(mode, false)
 	}()
 
 	return nil

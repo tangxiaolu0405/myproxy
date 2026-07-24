@@ -75,12 +75,7 @@ func (p *DarwinProxy) SetTerminalProxy(host string, port int, proxyType string) 
 	proxyURL := TerminalProxyURL(host, port, proxyType)
 
 	// 1. 设置当前进程环境变量（立即生效）
-	os.Setenv("HTTP_PROXY", proxyURL)
-	os.Setenv("HTTPS_PROXY", proxyURL)
-	os.Setenv("http_proxy", proxyURL)
-	os.Setenv("https_proxy", proxyURL)
-	os.Setenv("ALL_PROXY", proxyURL)
-	os.Setenv("all_proxy", proxyURL)
+	applyTerminalProxyEnv(proxyURL)
 
 	// 2. 使用外部shell文件方案（推荐）
 	return p.setupExternalShellFile(proxyURL)
@@ -88,15 +83,10 @@ func (p *DarwinProxy) SetTerminalProxy(host string, port int, proxyType string) 
 
 // ClearTerminalProxy 清除终端代理
 func (p *DarwinProxy) ClearTerminalProxy() error {
-	// 清除当前进程环境变量
-	os.Unsetenv("HTTP_PROXY")
-	os.Unsetenv("HTTPS_PROXY")
-	os.Unsetenv("http_proxy")
-	os.Unsetenv("https_proxy")
-	os.Unsetenv("ALL_PROXY")
-	os.Unsetenv("all_proxy")
+	// 清除当前进程环境变量（大小写成对 unset）
+	clearTerminalProxyEnv()
 
-	// 清除外部shell文件
+	// 清除外部shell文件与 rc 钩子
 	return p.removeExternalShellFile()
 }
 
@@ -150,34 +140,70 @@ func (p *DarwinProxy) setupExternalShellFile(proxyURL string) error {
 
 	// 1. 创建外部代理配置文件
 	proxyFile := filepath.Join(homeDir, myproxyProxyScriptName)
-	configContent := fmt.Sprintf(`# Proxy settings (set by myproxy)
-# This file is managed by myproxy. Do not edit manually.
-
-export HTTP_PROXY=%s
-export HTTPS_PROXY=%s
-export http_proxy=%s
-export https_proxy=%s
-export ALL_PROXY=%s
-export all_proxy=%s
-`, proxyURL, proxyURL, proxyURL, proxyURL, proxyURL, proxyURL)
-
-	if err := os.WriteFile(proxyFile, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(proxyFile, []byte(terminalProxyExportScript(proxyURL)), 0644); err != nil {
 		return fmt.Errorf("写入代理配置文件失败: %v", err)
 	}
 
-	// 2. 在 shell 配置文件中添加 source 语句（幂等：先清旧块再写一块）
+	// 2. 在常见 shell rc 中确保存在唯一 source 钩子
+	return p.ensureShellHooks(homeDir, proxyFile)
+}
+
+// removeExternalShellFile 移除外部shell文件配置
+func (p *DarwinProxy) removeExternalShellFile() error {
+	homeDir := os.Getenv("HOME")
+	if homeDir == "" {
+		return nil
+	}
+
+	proxyFile := filepath.Join(homeDir, myproxyProxyScriptName)
+
+	// 先写成 unset 脚本：若 rc 里仍有残留 source，新开终端也会清变量
+	_ = os.WriteFile(proxyFile, []byte(terminalProxyUnsetScript()), 0644)
+
+	// 从所有常见 rc 中移除钩子（不依赖当前 GUI 进程的 $SHELL）
+	_ = p.stripShellHooks(homeDir)
+
+	// 最后删除脚本文件
+	_ = os.Remove(proxyFile)
+	return nil
+}
+
+func applyTerminalProxyEnv(proxyURL string) {
+	for _, key := range terminalProxyEnvVars {
+		if key == "NO_PROXY" || key == "no_proxy" {
+			continue
+		}
+		_ = os.Setenv(key, proxyURL)
+	}
+}
+
+func clearTerminalProxyEnv() {
+	for _, key := range terminalProxyEnvVars {
+		_ = os.Unsetenv(key)
+	}
+}
+
+func shellRCCandidates(homeDir string) []string {
+	return []string{
+		filepath.Join(homeDir, ".zshrc"),
+		filepath.Join(homeDir, ".zprofile"),
+		filepath.Join(homeDir, ".bashrc"),
+		filepath.Join(homeDir, ".bash_profile"),
+		filepath.Join(homeDir, ".profile"),
+	}
+}
+
+func (p *DarwinProxy) ensureShellHooks(homeDir, proxyFile string) error {
+	// 先清全部，再只写入用户当前 SHELL 对应的主 rc，避免多处 source
+	_ = p.stripShellHooks(homeDir)
+
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/zsh"
 	}
-
-	var configFile string
-	if strings.Contains(shell, "zsh") {
-		configFile = filepath.Join(homeDir, ".zshrc")
-	} else if strings.Contains(shell, "bash") {
+	configFile := filepath.Join(homeDir, ".zshrc")
+	if strings.Contains(shell, "bash") {
 		configFile = filepath.Join(homeDir, ".bashrc")
-	} else {
-		return fmt.Errorf("不支持的 shell: %s", shell)
 	}
 
 	content, err := os.ReadFile(configFile)
@@ -186,9 +212,7 @@ export all_proxy=%s
 	}
 
 	sourceLine := "source " + proxyFile
-	// 先清掉历史标记/source（含孤立的重复注释），再写入唯一一块，保证幂等
 	cleaned := stripMyproxyShellHooks(string(content))
-
 	newContent := cleaned
 	if len(newContent) > 0 && !strings.HasSuffix(newContent, "\n") {
 		newContent += "\n"
@@ -201,45 +225,23 @@ export all_proxy=%s
 	return os.WriteFile(configFile, []byte(newContent), 0644)
 }
 
-// removeExternalShellFile 移除外部shell文件配置
-func (p *DarwinProxy) removeExternalShellFile() error {
-	homeDir := os.Getenv("HOME")
-	if homeDir == "" {
-		return nil
+func (p *DarwinProxy) stripShellHooks(homeDir string) error {
+	var firstErr error
+	for _, configFile := range shellRCCandidates(homeDir) {
+		content, err := os.ReadFile(configFile)
+		if err != nil {
+			continue
+		}
+		contentStr := string(content)
+		newContent := stripMyproxyShellHooks(contentStr)
+		if newContent == contentStr {
+			continue
+		}
+		if err := os.WriteFile(configFile, []byte(newContent), 0644); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-
-	// 1. 删除外部代理配置文件
-	proxyFile := filepath.Join(homeDir, myproxyProxyScriptName)
-	_ = os.Remove(proxyFile) // 忽略错误，文件可能不存在
-
-	// 2. 从 shell 配置文件中移除 source 语句与标记注释
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/zsh"
-	}
-
-	var configFile string
-	if strings.Contains(shell, "zsh") {
-		configFile = filepath.Join(homeDir, ".zshrc")
-	} else if strings.Contains(shell, "bash") {
-		configFile = filepath.Join(homeDir, ".bashrc")
-	} else {
-		return nil
-	}
-
-	content, err := os.ReadFile(configFile)
-	if err != nil {
-		return nil // 文件不存在，无需清除
-	}
-
-	contentStr := string(content)
-	newContent := stripMyproxyShellHooks(contentStr)
-
-	if newContent != contentStr {
-		return os.WriteFile(configFile, []byte(newContent), 0644)
-	}
-
-	return nil
+	return firstErr
 }
 
 // stripMyproxyShellHooks 移除 myproxy 写入的标记注释与 source 行（含历史遗留的孤立注释）。
@@ -261,7 +263,7 @@ func stripMyproxyShellHooks(content string) string {
 		newLines = append(newLines, line)
 	}
 
-	// 去掉因删除产生的文件末尾多余空行（最多保留一个换行语义由 Join 处理）
+	// 去掉因删除产生的文件末尾多余空行
 	for len(newLines) > 0 && strings.TrimSpace(newLines[len(newLines)-1]) == "" {
 		newLines = newLines[:len(newLines)-1]
 	}

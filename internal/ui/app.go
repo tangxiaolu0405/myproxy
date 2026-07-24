@@ -537,10 +537,9 @@ func (a *AppState) clearProxiesOnShutdown() {
 			a.SafeLogger.Warn(fmt.Sprintf("退出时清除系统代理失败: %v", err))
 		}
 	}
-	if a.ConfigService != nil && a.ConfigService.GetTerminalProxyEnabled() {
-		if err := sp.ClearTerminalProxy(); err != nil && a.SafeLogger != nil {
-			a.SafeLogger.Warn(fmt.Sprintf("退出时清除终端代理失败: %v", err))
-		}
+	// 退出时始终尝试清除终端代理残留，避免依赖开关状态
+	if err := sp.ClearTerminalProxy(); err != nil && a.SafeLogger != nil {
+		a.SafeLogger.Warn(fmt.Sprintf("退出时清除终端代理失败: %v", err))
 	}
 	if a.ConfigService != nil && a.ConfigService.GetGitProxyEnabled() {
 		if err := sp.ClearGitProxy(); err != nil && a.SafeLogger != nil {
