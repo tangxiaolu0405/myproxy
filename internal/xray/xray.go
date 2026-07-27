@@ -710,6 +710,12 @@ func CreateXrayConfig(localPort int, listenHost string, server *model.Node, logF
 			"auth": "noauth",
 			"udp":  true,
 		},
+		// 嗅探域名，便于系统代理模式下按 domain/keyword 直连规则匹配（否则可能只见 IP）
+		"sniffing": map[string]interface{}{
+			"enabled":      true,
+			"destOverride": []string{"http", "tls", "quic"},
+			"routeOnly":    true,
+		},
 	}
 
 	inbounds := []interface{}{inbound}
@@ -837,11 +843,30 @@ func splitDirectRoutes(routes []string) (domains, ips []string) {
 			continue
 		}
 		if strings.HasPrefix(s, "domain:") || strings.HasPrefix(s, "geosite:") ||
-			strings.HasPrefix(s, "regexp:") || strings.HasPrefix(s, "full:") {
+			strings.HasPrefix(s, "regexp:") || strings.HasPrefix(s, "full:") ||
+			strings.HasPrefix(s, "keyword:") {
 			domains = append(domains, s)
-		} else {
+			continue
+		}
+		// 无前缀：像 IP/CIDR 走 ip，否则按 keyword 兜底（避免误进 ip 导致永远不匹配）
+		if isXrayIPOrCIDR(s) {
 			ips = append(ips, s)
+		} else {
+			domains = append(domains, "keyword:"+s)
 		}
 	}
 	return domains, ips
+}
+
+func isXrayIPOrCIDR(s string) bool {
+	if strings.Contains(s, "/") {
+		return true
+	}
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || r == '.' || r == ':' {
+			continue
+		}
+		return false
+	}
+	return strings.Contains(s, ".") || strings.Contains(s, ":")
 }

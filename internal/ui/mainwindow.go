@@ -1192,8 +1192,14 @@ func (mw *MainWindow) stopProxy() {
 	}
 }
 
-// RestartXrayIfRunningForInboundListenChange 在「允许 WSL/局域网入站」开关变更且代理已运行时重启 xray，使 listen 地址立即生效。
+// RestartXrayIfRunningForInboundListenChange 在「允许 WSL/局域网入站」开关变更且代理已运行时重启 xray。
 func (mw *MainWindow) RestartXrayIfRunningForInboundListenChange() {
+	mw.RestartXrayIfRunningForConfigChange("入站监听范围")
+}
+
+// RestartXrayIfRunningForConfigChange 在配置变更且代理已运行时重启 xray，使新配置立即生效。
+// reason 用于日志说明（如「直连路由」「入站监听范围」）。
+func (mw *MainWindow) RestartXrayIfRunningForConfigChange(reason string) {
 	if mw == nil || mw.appState == nil || mw.appState.XrayControlService == nil {
 		return
 	}
@@ -1209,7 +1215,7 @@ func (mw *MainWindow) RestartXrayIfRunningForInboundListenChange() {
 
 	stopRes := mw.appState.XrayControlService.StopProxy(mw.appState.XrayInstance)
 	if stopRes.Error != nil {
-		mw.logAndShowError("停止代理失败（无法套用入站监听设置）", stopRes.Error)
+		mw.logAndShowError(fmt.Sprintf("停止代理失败（无法套用%s）", reason), stopRes.Error)
 		return
 	}
 	mw.appState.XrayInstance = nil
@@ -1228,7 +1234,7 @@ func (mw *MainWindow) RestartXrayIfRunningForInboundListenChange() {
 	}
 	startRes := mw.appState.XrayControlService.StartProxy(nil, unifiedLogPath)
 	if startRes.Error != nil {
-		mw.logAndShowError("启动代理失败（入站监听设置可能未生效）", startRes.Error)
+		mw.logAndShowError(fmt.Sprintf("启动代理失败（%s可能未生效）", reason), startRes.Error)
 		mw.appState.UpdateProxyStatus()
 		mw.updateMainToggleButton()
 		return
@@ -1241,7 +1247,9 @@ func (mw *MainWindow) RestartXrayIfRunningForInboundListenChange() {
 	}
 	if mw.appState.Logger != nil && startRes.XrayInstance != nil {
 		if n := mw.appState.Store.Nodes.GetSelected(); n != nil {
-			mw.appState.Logger.InfoWithType(logging.LogTypeProxy, "已重启 xray 以套用入站监听范围（节点: %s，端口: %d）", n.Name, startRes.XrayInstance.GetPort())
+			mw.appState.Logger.InfoWithType(logging.LogTypeProxy, "已重启 xray 以套用%s（节点: %s，端口: %d）", reason, n.Name, startRes.XrayInstance.GetPort())
+		} else {
+			mw.appState.Logger.InfoWithType(logging.LogTypeProxy, "已重启 xray 以套用%s", reason)
 		}
 	}
 	mw.appState.UpdateProxyStatus()

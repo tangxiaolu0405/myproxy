@@ -68,16 +68,20 @@ PlatformProxy (接口)
 ### 实现细节
 
 #### 设置代理时：
-1. 创建 `~/.myproxy_proxy.sh` 文件，包含所有代理环境变量
-2. 在 `~/.zshrc` 或 `~/.bashrc` 中添加：
+1. 创建 `~/.myproxy_proxy.sh`（export 代理变量）
+2. 创建 `~/.myproxy_shell_hook.sh`（zsh precmd / bash PROMPT_COMMAND：文件变更时自动 source）
+3. 在 `~/.zshrc` 或 `~/.bashrc` 中添加：
    ```bash
    # Source myproxy proxy settings
-   source ~/.myproxy_proxy.sh
+   source ~/.myproxy_shell_hook.sh
    ```
 
+已打开的终端在下一轮 prompt（按回车）即可同步；`reset` 不会刷新环境变量。首次启用后若钩子尚未加载，请执行一次 `source ~/.zshrc` 或新开终端。
+
 #### 清除代理时：
-1. 删除 `~/.myproxy_proxy.sh` 文件
-2. 从 shell 配置文件中移除 source 语句
+1. 将 `~/.myproxy_proxy.sh` 写成 unset（便于已加载钩子的终端清变量）
+2. 从 shell 配置中移除 source 语句
+3. 删除 `~/.myproxy_proxy.sh` 与 `~/.myproxy_shell_hook.sh`
 
 ## 使用示例
 

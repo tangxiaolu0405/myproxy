@@ -1,14 +1,18 @@
 package systemproxy
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStripMyproxyShellHooks_RemovesOrphanComments(t *testing.T) {
 	in := `# user stuff
 export FOO=1
 # Source myproxy proxy settings
 # Source myproxy proxy settings
-# Source myproxy proxy settings
 source /Users/me/.myproxy_proxy.sh
+# Source myproxy proxy settings
+source /Users/me/.myproxy_shell_hook.sh
 # more stuff
 `
 	got := stripMyproxyShellHooks(in)
@@ -23,10 +27,9 @@ export FOO=1
 
 func TestStripMyproxyShellHooks_IdempotentSetupShape(t *testing.T) {
 	home := "/Users/me"
-	sourceLine := "source " + home + "/.myproxy_proxy.sh"
+	sourceLine := "source " + home + "/.myproxy_shell_hook.sh"
 	base := "# user stuff\n"
 
-	// 模拟多次 setup：每次 strip 后再追加一块
 	content := base
 	for i := 0; i < 3; i++ {
 		cleaned := stripMyproxyShellHooks(content)
@@ -49,6 +52,21 @@ func TestStripMyproxyShellHooks_IdempotentSetupShape(t *testing.T) {
 	}
 	if markerCount != 1 || sourceCount != 1 {
 		t.Fatalf("marker=%d source=%d content:\n%s", markerCount, sourceCount, content)
+	}
+}
+
+func TestTerminalProxyPromptHookScript_ContainsSyncLogic(t *testing.T) {
+	s := terminalProxyPromptHookScript()
+	for _, want := range []string{
+		"_myproxy_apply_proxy",
+		".myproxy_proxy.sh",
+		"add-zsh-hook",
+		"PROMPT_COMMAND",
+		"precmd",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("hook script missing %q", want)
+		}
 	}
 }
 

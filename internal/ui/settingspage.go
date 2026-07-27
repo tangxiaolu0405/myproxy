@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"myproxy.com/p/internal/model"
+	"myproxy.com/p/internal/service"
 )
 
 // SettingsMenu 设置菜单项
@@ -325,6 +326,7 @@ func (sp *SettingsPage) buildDirectRouteContent() fyne.CanvasObject {
 	sp.routeUseProxy.OnChanged = func(b bool) {
 		if sp.appState != nil && sp.appState.ConfigService != nil {
 			_ = sp.appState.ConfigService.SetDirectRoutesUseProxy(b)
+			sp.applyDirectRoutesIfProxyRunning()
 		}
 	}
 
@@ -351,9 +353,12 @@ func (sp *SettingsPage) buildDirectRouteContent() fyne.CanvasObject {
 	)
 
 	sp.routeAddEntry = widget.NewEntry()
-	sp.routeAddEntry.SetPlaceHolder("domain:xxx 或 IP/CIDR")
+	sp.routeAddEntry.SetPlaceHolder("bilibili.com / bilibili / domain:xxx / IP")
 	addBtn := widget.NewButtonWithIcon("添加", theme.ContentAddIcon(), sp.addRoute)
 	addBtn.Importance = widget.LowImportance
+
+	routeHint := widget.NewLabel("直连由 xray 路由生效（系统代理模式下亦如此）。无点名称如 bilibili 会按关键词匹配；修改后若代理已运行会自动重启以套用。")
+	routeHint.Wrapping = fyne.TextWrapWord
 
 	addArea := container.NewBorder(nil, nil, nil, addBtn, sp.routeAddEntry)
 
@@ -393,6 +398,8 @@ func (sp *SettingsPage) buildDirectRouteContent() fyne.CanvasObject {
 		}
 		sp.reapplyPersistedSystemProxyFromConfig()
 	}
+	terminalProxyHint := widget.NewLabel("macOS：写入 ~/.myproxy_proxy.sh，并在 shell 安装 prompt 钩子；已打开的终端按一次回车即可同步（首次启用请先 source ~/.zshrc 或新开终端）。reset 不会刷新环境变量。")
+	terminalProxyHint.Wrapping = fyne.TextWrapWord
 
 	gitProxyCheck := widget.NewCheck("Git 全局代理", nil)
 	if sp.appState != nil && sp.appState.ConfigService != nil {
@@ -429,6 +436,7 @@ func (sp *SettingsPage) buildDirectRouteContent() fyne.CanvasObject {
 		listenAllHint,
 		widget.NewSeparator(),
 		terminalProxyCheck,
+		terminalProxyHint,
 		container.NewVBox(
 			gitProxyCheck,
 			gitProxyHint,
@@ -446,7 +454,7 @@ func (sp *SettingsPage) buildDirectRouteContent() fyne.CanvasObject {
 
 	// 使用 Border 布局：顶部固定代理配置区域，中间路由列表占满剩余空间，底部固定添加路由区域
 	return container.NewBorder(
-		container.NewVBox(proxyConfigArea, routesLabel), // 顶部：代理配置区域 + "路由列表"标签
+		container.NewVBox(proxyConfigArea, routesLabel, routeHint), // 顶部：代理配置 + 列表标题 + 提示
 		addArea, // 底部：添加路由输入框
 		nil, nil,
 		listScroll, // 中间：路由列表占满剩余空间
@@ -500,12 +508,20 @@ func (sp *SettingsPage) resetToDefaultRoutes() {
 	}
 }
 
-// saveRoutes 将 routesData 保存到 ConfigService。
+// saveRoutes 将 routesData 保存到 ConfigService，并在代理运行时重启以套用路由。
 func (sp *SettingsPage) saveRoutes() {
 	if sp.appState == nil || sp.appState.ConfigService == nil {
 		return
 	}
 	_ = sp.appState.ConfigService.SetDirectRoutes(sp.routesData)
+	sp.applyDirectRoutesIfProxyRunning()
+}
+
+// applyDirectRoutesIfProxyRunning 直连规则变更后，若代理已运行则重启 xray 使规则立即生效。
+func (sp *SettingsPage) applyDirectRoutesIfProxyRunning() {
+	if sp.appState != nil && sp.appState.MainWindow != nil {
+		sp.appState.MainWindow.RestartXrayIfRunningForConfigChange("直连路由")
+	}
 }
 
 // addRoute 添加一条新路由。
@@ -583,37 +599,7 @@ func (sp *SettingsPage) showEditRouteDialog(id widget.ListItemID) {
 
 // parseSingleRoute 解析单条路由输入，返回规范化后的列表。
 func parseSingleRoute(input string) []string {
-	// 复用 ConfigService 的解析逻辑：通过换行分割，空行忽略
-	lines := strings.Split(input, "\n")
-	var out []string
-	for _, line := range lines {
-		s := strings.TrimSpace(line)
-		if s == "" {
-			continue
-		}
-		if strings.HasPrefix(s, "domain:") || strings.HasPrefix(s, "geosite:") ||
-			strings.HasPrefix(s, "regexp:") || strings.HasPrefix(s, "full:") {
-			out = append(out, s)
-		} else if strings.Contains(s, ".") && !isLikelyIPOrCIDR(s) {
-			out = append(out, "domain:"+s)
-		} else {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func isLikelyIPOrCIDR(s string) bool {
-	if strings.Contains(s, "/") {
-		return true
-	}
-	for _, r := range s {
-		if (r >= '0' && r <= '9') || r == '.' {
-			continue
-		}
-		return false
-	}
-	return true
+	return service.NormalizeDirectRouteInput(input)
 }
 
 // buildLogContent 构建设置「日志」内容区，嵌入完整日志面板用于查看日志。

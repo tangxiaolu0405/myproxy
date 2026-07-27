@@ -25,6 +25,10 @@ var defaultDirectRoutes = []string{
 	"domain:tudou.com",
 	"domain:iqiyi.com",
 	"domain:cntv.cn",
+	"domain:bilibili.com",
+	"domain:bilivideo.com",
+	"domain:biliapi.net",
+	"domain:hdslb.com",
 	"domain:mi.com",
 	"domain:huawei.com",
 	"domain:oppo.com",
@@ -525,8 +529,13 @@ func (cs *ConfigService) SetProxyType(proxyType string) error {
 	return cs.store.AppConfig.Set("proxyType", proxyType)
 }
 
+// NormalizeDirectRouteInput 规范化用户输入的直连规则（可含多行），供 UI 添加/编辑复用。
+func NormalizeDirectRouteInput(raw string) []string {
+	return parseDirectRoutes(raw)
+}
+
 // parseDirectRoutes 从换行分隔的字符串解析直连路由列表。
-// 支持 domain:xxx、ip 或 cidr，纯域名会补全为 domain:xxx。
+// 支持 domain:xxx、keyword:xxx、ip/cidr；纯域名补 domain:；无点主机名（如 bilibili）补 keyword:。
 func parseDirectRoutes(raw string) []string {
 	var out []string
 	for _, line := range strings.Split(raw, "\n") {
@@ -534,20 +543,33 @@ func parseDirectRoutes(raw string) []string {
 		if s == "" {
 			continue
 		}
-		// 已是 domain: 或 geosite: 等前缀则保持
-		if strings.HasPrefix(s, "domain:") || strings.HasPrefix(s, "geosite:") ||
-			strings.HasPrefix(s, "regexp:") || strings.HasPrefix(s, "full:") {
-			out = append(out, s)
-			continue
-		}
-		// 简单启发式：含有点且非纯数字，视为域名
-		if strings.Contains(s, ".") && !isLikelyIPOrCIDR(s) {
-			out = append(out, "domain:"+s)
-		} else {
-			out = append(out, s)
-		}
+		out = append(out, normalizeDirectRouteEntry(s))
 	}
 	return out
+}
+
+// normalizeDirectRouteEntry 将单条用户输入规范为 xray 可用的规则项。
+func normalizeDirectRouteEntry(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	// 已是 xray 域名类前缀则保持
+	if strings.HasPrefix(s, "domain:") || strings.HasPrefix(s, "geosite:") ||
+		strings.HasPrefix(s, "regexp:") || strings.HasPrefix(s, "full:") ||
+		strings.HasPrefix(s, "keyword:") {
+		return s
+	}
+	// IP / CIDR 原样保留
+	if isLikelyIPOrCIDR(s) {
+		return s
+	}
+	// 含点：视为域名后缀匹配（domain:bilibili.com）
+	if strings.Contains(s, ".") {
+		return "domain:" + s
+	}
+	// 无点主机名（用户常写 bilibili）：用 keyword 匹配 *.bilibili.com 等
+	return "keyword:" + s
 }
 
 func isLikelyIPOrCIDR(s string) bool {
@@ -555,13 +577,16 @@ func isLikelyIPOrCIDR(s string) bool {
 	if strings.Contains(s, "/") {
 		return true
 	}
+	if s == "" {
+		return false
+	}
 	for _, r := range s {
-		if (r >= '0' && r <= '9') || r == '.' {
+		if (r >= '0' && r <= '9') || r == '.' || r == ':' {
 			continue
 		}
 		return false
 	}
-	return true
+	return strings.Contains(s, ".") || strings.Contains(s, ":")
 }
 
 // formatDirectRoutes 将直连路由列表格式化为换行分隔的字符串。
