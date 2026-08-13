@@ -8,7 +8,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -158,6 +157,7 @@ const (
 	PageTypeNode                         // 节点列表页面
 	PageTypeSettings                     // 设置页面
 	PageTypeSubscription                 // 订阅管理页面
+	PageTypeChain                        // 链式代理配置页面
 )
 
 // PageStack 路由栈结构，用于管理页面导航历史
@@ -327,6 +327,9 @@ type MainWindow struct {
 	subscriptionPage         fyne.CanvasObject // 订阅管理页面
 	subscriptionPageInstance *SubscriptionPage // 订阅管理页面实例
 
+	chainPage         fyne.CanvasObject // 链式代理配置页面
+	chainPageInstance *ChainPage        // 链式代理配置页面实例
+
 	homeLogoIcon  *widget.Icon  // 主页logo图标，用于主题变化时更新
 	homePortLabel *widget.Label // 主页底栏：本地入站端口
 
@@ -435,6 +438,10 @@ func (mw *MainWindow) Cleanup() {
 		mw.settingsPageInstance.Cleanup()
 		mw.settingsPageInstance = nil
 	}
+	if mw.chainPageInstance != nil {
+		mw.chainPageInstance.Cleanup()
+		mw.chainPageInstance = nil
+	}
 }
 
 // GetLayoutConfig 返回当前的布局配置。
@@ -462,6 +469,10 @@ func (mw *MainWindow) initPages() {
 	// 订阅管理页面（subscriptionPage）：订阅列表和管理功能
 	mw.subscriptionPageInstance = NewSubscriptionPage(mw.appState)
 	mw.subscriptionPage = mw.subscriptionPageInstance.Build()
+
+	// 链式代理配置页面（chainPage）：拖拽式链配置
+	mw.chainPageInstance = NewChainPage(mw.appState)
+	mw.chainPage = mw.chainPageInstance.Build()
 }
 
 // buildHomePage 构建主界面 Container（homePage）
@@ -763,6 +774,16 @@ func (mw *MainWindow) navigateToPage(pageType PageType, pushCurrent bool) {
 			mw.subscriptionPageInstance.Refresh()
 		}
 		pageContent = mw.subscriptionPage
+	case PageTypeChain:
+		if mw.chainPage == nil {
+			mw.chainPageInstance = NewChainPage(mw.appState)
+			mw.chainPage = mw.chainPageInstance.Build()
+		}
+		// 刷新链草稿与右侧节点列表
+		if mw.chainPageInstance != nil {
+			mw.chainPageInstance.Refresh()
+		}
+		pageContent = mw.chainPage
 	default:
 		// 未知页面类型，返回主界面
 		if mw.homePage == nil {
@@ -793,6 +814,11 @@ func (mw *MainWindow) ShowSettingsPage() {
 // ShowSubscriptionPage 切换到订阅管理页面（subscriptionPage）
 func (mw *MainWindow) ShowSubscriptionPage() {
 	mw.navigateToPage(PageTypeSubscription, true)
+}
+
+// ShowChainPage 切换到链式代理配置页面（chainPage）
+func (mw *MainWindow) ShowChainPage() {
+	mw.navigateToPage(PageTypeChain, true)
 }
 
 // RebuildCurrentPageForTheme 主题切换后重建当前页面，使侧栏/背景等缓存的主题色生效；
@@ -904,17 +930,17 @@ func (mw *MainWindow) onTunModeChanged(enabled bool) {
 
 	if enabled {
 		if err := utils.RequireElevatedForTUN(); err != nil {
-			dialog.ShowError(err, mw.appState.Window)
+			mw.appState.Dialogs.ShowError(err)
 			mw.setTunCheckSilent(false)
 			return
 		}
 		if err := utils.EnsureWintunForTUN(); err != nil {
-			dialog.ShowError(err, mw.appState.Window)
+			mw.appState.Dialogs.ShowError(err)
 			mw.setTunCheckSilent(false)
 			return
 		}
 		if err := mw.appState.ConfigService.SetProxyMode(service.ProxyModeTUN); err != nil {
-			dialog.ShowError(err, mw.appState.Window)
+			mw.appState.Dialogs.ShowError(err)
 			mw.setTunCheckSilent(false)
 			return
 		}
@@ -924,7 +950,7 @@ func (mw *MainWindow) onTunModeChanged(enabled bool) {
 		mw.appState.AppendLog("INFO", "app", "已启用 TUN 全局模式（任意端口流量经虚拟网卡）")
 	} else {
 		if err := mw.appState.ConfigService.SetProxyMode(service.ProxyModeSystem); err != nil {
-			dialog.ShowError(err, mw.appState.Window)
+			mw.appState.Dialogs.ShowError(err)
 			mw.setTunCheckSilent(true)
 			return
 		}
@@ -1040,15 +1066,20 @@ func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) error {
 
 	// 记录日志（统一日志记录）
 	if mw.appState.Logger != nil && result.XrayInstance != nil {
-		selectedNode := mw.appState.Store.Nodes.GetSelected()
-		if selectedNode != nil {
-			mw.appState.Logger.InfoWithType(logging.LogTypeProxy, "xray-core代理已启动: %s (端口: %d)", selectedNode.Name, result.XrayInstance.GetPort())
+		displayName := mw.proxyDisplayName()
+		if displayName != "" {
+			mw.appState.Logger.InfoWithType(logging.LogTypeProxy, "xray-core代理已启动: %s (端口: %d)", displayName, result.XrayInstance.GetPort())
 		}
 	}
 
 	// 更新状态绑定（使用双向绑定，UI 会自动更新）
 	if mw.appState != nil {
 		mw.appState.UpdateProxyStatus()
+	}
+
+	// 代理已成功运行：关闭残留的失败/告警弹窗（如连接中断、启动失败）
+	if mw.appState != nil && mw.appState.Dialogs != nil {
+		mw.appState.Dialogs.DismissFailure()
 	}
 
 	// 与代理状态同步：更新主开关按钮
@@ -1069,16 +1100,52 @@ func (mw *MainWindow) startProxyInternal(showSuccessDialog bool) error {
 	}
 
 	if showSuccessDialog && mw.appState.Window != nil && result.XrayInstance != nil {
-		selectedNode := mw.appState.Store.Nodes.GetSelected()
-		if selectedNode != nil {
-			message := fmt.Sprintf("代理已启动\n节点: %s\n端口: %d", selectedNode.Name, result.XrayInstance.GetPort())
+		displayName := mw.proxyDisplayName()
+		if displayName != "" {
+			label := "节点"
+			if mw.appState.ConfigService != nil && mw.appState.ConfigService.IsChainMode() {
+				label = "链式节点"
+			}
+			message := fmt.Sprintf("代理已启动\n%s: %s\n端口: %d", label, displayName, result.XrayInstance.GetPort())
 			if mw.appState.ConfigService != nil && mw.appState.ConfigService.IsTunMode() {
 				message += "\n模式: TUN 全局"
 			}
-			dialog.ShowInformation("代理启动成功", message, mw.appState.Window)
+			mw.appState.Dialogs.ShowInfo("代理启动成功", message)
 		}
 	}
 	return nil
+}
+
+// proxyDisplayName 返回当前代理的展示名称：链式模式为「节点名 → 节点名」，否则为当前选中节点名。
+func (mw *MainWindow) proxyDisplayName() string {
+	if mw == nil || mw.appState == nil {
+		return ""
+	}
+	if mw.appState.ConfigService != nil && mw.appState.ConfigService.IsChainMode() {
+		if mw.appState.Store != nil && mw.appState.Store.Chain != nil {
+			ids := mw.appState.Store.Chain.GetNodeIDs()
+			names := make([]string, 0, len(ids))
+			for _, id := range ids {
+				if mw.appState.Store.Nodes != nil {
+					if node, err := mw.appState.Store.Nodes.Get(id); err == nil {
+						names = append(names, node.Name)
+						continue
+					}
+				}
+				names = append(names, id)
+			}
+			if len(names) > 0 {
+				return strings.Join(names, " → ")
+			}
+		}
+		return "链式代理"
+	}
+	if mw.appState.Store != nil && mw.appState.Store.Nodes != nil {
+		if node := mw.appState.Store.Nodes.GetSelected(); node != nil {
+			return node.Name
+		}
+	}
+	return ""
 }
 
 // SwitchToServer 选中节点并启动/重连代理（托盘入口：未运行则启动，已运行则切换重连）。
@@ -1090,6 +1157,14 @@ func (mw *MainWindow) SwitchToServer(id string) error {
 	if err := mw.appState.Store.SelectServer(id); err != nil {
 		mw.logAndShowError("选中节点失败", err)
 		return fmt.Errorf("主窗口: 选中节点失败: %w", err)
+	}
+
+	// 单节点模式：从链式模式切换回单节点模式（若代理在运行，后续启动会重建实例）
+	if mw.appState.ConfigService != nil && mw.appState.ConfigService.IsChainMode() {
+		if err := mw.appState.ConfigService.SetProxyChainMode(service.ProxyChainModeSingle); err != nil {
+			mw.logAndShowError("切换代理模式失败", err)
+			return fmt.Errorf("主窗口: 切换代理模式失败: %w", err)
+		}
 	}
 
 	if !mw.proxyOpMu.TryLock() {
@@ -1174,6 +1249,11 @@ func (mw *MainWindow) stopProxy() {
 		mw.appState.UpdateProxyStatus()
 	}
 
+	// 已主动停止：关闭残留的连接中断等失败/告警弹窗
+	if mw.appState != nil && mw.appState.Dialogs != nil {
+		mw.appState.Dialogs.DismissFailure()
+	}
+
 	// 与代理状态同步：更新主开关按钮
 	mw.updateMainToggleButton()
 
@@ -1185,9 +1265,9 @@ func (mw *MainWindow) stopProxy() {
 	// 显示成功对话框
 	if mw.appState.Window != nil {
 		if result.LogMessage == "代理未运行" {
-			dialog.ShowInformation("提示", "代理未运行", mw.appState.Window)
+			mw.appState.Dialogs.ShowInfo("提示", "代理未运行")
 		} else {
-			dialog.ShowInformation("代理停止成功", "代理已停止", mw.appState.Window)
+			mw.appState.Dialogs.ShowInfo("代理停止成功", "代理已停止")
 		}
 	}
 }
@@ -1280,7 +1360,7 @@ func (mw *MainWindow) logAndShowError(message string, err error) {
 		mw.appState.Window.Show()
 		mw.appState.Window.RequestFocus()
 		errorMsg := fmt.Errorf("%s: %w", message, err)
-		dialog.ShowError(errorMsg, mw.appState.Window)
+		mw.appState.Dialogs.ShowError(errorMsg)
 	}
 	if mw.appState != nil {
 		mw.appState.AppendLog("ERROR", "app", fmt.Sprintf("%s: %v", message, err))
@@ -1381,10 +1461,8 @@ func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore
 	if mode == SystemProxyModeAuto {
 		chainMsg := fmt.Sprintf("系统代理链路: 写入端口=%d（app_config.autoProxyPort 解析=%d; xray.GetPort 覆盖=%t）",
 			proxyPort, configPort, xrayOverrode)
+		// AppendLog 内部已通过 Logger 落盘并分发到 UI 面板，避免与 Logger 重复输出
 		mw.appState.AppendLog("INFO", "app", chainMsg)
-		if mw.appState.Logger != nil {
-			mw.appState.Logger.InfoWithType(logging.LogTypeApp, "%s", chainMsg)
-		}
 	}
 
 	var err error
@@ -1468,17 +1546,11 @@ func (mw *MainWindow) applySystemProxyModeCore(mode SystemProxyMode, saveToStore
 		err = fmt.Errorf("未知的系统代理模式: %s", mode.String())
 	}
 
-	// 输出日志
+	// 输出日志（AppendLog 内部已通过 Logger 落盘并分发到 UI 面板，避免重复输出）
 	if err == nil {
 		mw.appState.AppendLog("INFO", "app", logMessage)
-		if mw.appState.Logger != nil {
-			mw.appState.Logger.InfoWithType(logging.LogTypeApp, "%s", logMessage)
-		}
 	} else {
 		mw.appState.AppendLog("ERROR", "app", logMessage)
-		if mw.appState.Logger != nil {
-			mw.appState.Logger.Error("%s", logMessage)
-		}
 	}
 
 	// 保存状态到 Store（如果需要）
@@ -1496,7 +1568,7 @@ func (mw *MainWindow) onProxyModeButtonClicked(mode SystemProxyMode) {
 		return
 	}
 	if mode == SystemProxyModeAuto && mw.appState.ConfigService != nil && mw.appState.ConfigService.IsTunMode() {
-		dialog.ShowInformation("提示", "已启用 TUN 全局模式，无需再开系统代理。如需系统代理请先关闭 TUN。", mw.appState.Window)
+		mw.appState.Dialogs.ShowInfo("提示", "已启用 TUN 全局模式，无需再开系统代理。如需系统代理请先关闭 TUN。")
 		return
 	}
 

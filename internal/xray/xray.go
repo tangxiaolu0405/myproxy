@@ -745,6 +745,118 @@ func CreateXrayConfig(localPort int, listenHost string, server *model.Node, logF
 		return nil, fmt.Errorf("Xray: 创建出站配置失败: %w", err)
 	}
 
+	return buildXrayConfig(localPort, listenHost, []interface{}{outbound}, logFilePath, routing, enableTun)
+}
+
+// CreateChainXrayConfig 创建链式代理的完整 xray 配置。
+// 链式拨号通过出站 proxySettings.tag 实现：第 i（i>0）跳的出站先经上一跳出站（tag=chain-(i-1)）再连接自身服务器，
+// 末节点（出口）tag 固定为 "proxy"（用于流量统计与默认路由）。例如 [A, B, C]：A 直连（chain-0）→ B 经 A（chain-1）→ C 经 B（proxy）。
+// 参数：
+//   - localPort: 本地混合入站监听端口（SOCKS5 + HTTP，为 0 时使用 database.DefaultMixedInboundPort）
+//   - listenHost: 入站 bind 地址，如 database.LocalMixedInboundListenHost 或 "0.0.0.0"（空则回退为 127.0.0.1）
+//   - servers: 链式节点列表（有序，首=入口/第一跳，末=出口；至少 1 个，1 个时退化为单节点配置）
+//   - logFilePath: 日志文件路径（可选，为空则不设置）
+//   - routing: 路由选项（可选，nil 则仅使用内置规则）
+//   - enableTun: 是否启用 TUN 全局入站（与 mixed 入站并存；需管理员/wintun）
+//
+// 返回：xray 配置 JSON 和错误（如果有）
+func CreateChainXrayConfig(localPort int, listenHost string, servers []*model.Node, logFilePath string, routing *RoutingOptions, enableTun bool) ([]byte, error) {
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("Xray: 链式代理节点列表为空")
+	}
+	if localPort == 0 {
+		localPort = database.DefaultMixedInboundPort
+	}
+	if listenHost == "" {
+		listenHost = database.LocalMixedInboundListenHost
+	}
+
+	// 单节点退化为普通配置
+	if len(servers) == 1 {
+		return CreateXrayConfig(localPort, listenHost, servers[0], logFilePath, routing, enableTun)
+	}
+
+	outbounds := make([]interface{}, 0, len(servers))
+	for i, server := range servers {
+		outbound, err := CreateOutboundFromServer(server)
+		if err != nil {
+			return nil, fmt.Errorf("Xray: 创建链式代理第 %d 跳出站配置失败: %w", i+1, err)
+		}
+		// 末节点为出口，tag 固定 "proxy"（路由默认出口 + 流量统计）；其余按位置命名
+		if i == len(servers)-1 {
+			outbound["tag"] = "proxy"
+		} else {
+			outbound["tag"] = fmt.Sprintf("chain-%d", i)
+		}
+		// 除首节点（入口，直连本地入站）外，每跳出站先经前一跳出站（proxySettings.tag），形成链式拨号
+		if i > 0 {
+			outbound["proxySettings"] = map[string]interface{}{
+				"tag": fmt.Sprintf("chain-%d", i-1),
+			}
+		}
+		outbounds = append(outbounds, outbound)
+	}
+
+	return buildXrayConfig(localPort, listenHost, outbounds, logFilePath, routing, enableTun)
+}
+
+// buildXrayConfig 构建完整的 xray 配置（入站 + 出站 + 直连 + 路由）。
+// 参数：
+//   - localPort: 本地混合入站监听端口
+//   - listenHost: 入站 bind 地址
+//   - outbounds: 出站列表（链式模式含多跳；单节点模式为单个出站）
+//   - logFilePath: 日志文件路径（可选，为空则不设置）
+//   - routing: 路由选项（可选）
+//   - enableTun: 是否启用 TUN 全局入站
+//
+// 返回：xray 配置 JSON 和错误（如果有）
+func buildXrayConfig(localPort int, listenHost string, outbounds []interface{}, logFilePath string, routing *RoutingOptions, enableTun bool) ([]byte, error) {
+	if localPort == 0 {
+		localPort = database.DefaultMixedInboundPort
+	}
+	if listenHost == "" {
+		listenHost = database.LocalMixedInboundListenHost
+	}
+
+	// 创建入站配置：Xray Socks 入站同时接受 SOCKS5 与 HTTP（同一端口）
+	inbound := map[string]interface{}{
+		"tag":      "mixed-in",
+		"listen":   listenHost,
+		"port":     localPort,
+		"protocol": "socks",
+		"settings": map[string]interface{}{
+			"auth": "noauth",
+			"udp":  true,
+		},
+		// 嗅探域名，便于系统代理模式下按 domain/keyword 直连规则匹配（否则可能只见 IP）
+		"sniffing": map[string]interface{}{
+			"enabled":      true,
+			"destOverride": []string{"http", "tls", "quic"},
+			"routeOnly":    true,
+		},
+	}
+
+	inbounds := []interface{}{inbound}
+	if enableTun {
+		autoIface := "auto"
+		inbounds = append(inbounds, map[string]interface{}{
+			"tag":      "tun-in",
+			"protocol": "tun",
+			"settings": map[string]interface{}{
+				"name":                   "xray0",
+				"mtu":                    1500,
+				"gateway":                []string{"10.0.0.1/16", "fc00::1/64"},
+				"dns":                    []string{"1.1.1.1", "8.8.8.8"},
+				"autoSystemRoutingTable": []string{"0.0.0.0/0", "::/0"},
+				"autoOutboundsInterface": autoIface,
+			},
+			"sniffing": map[string]interface{}{
+				"enabled":      true,
+				"destOverride": []string{"http", "tls", "quic"},
+			},
+		})
+	}
+
 	// 创建直连出站配置
 	directOutbound := map[string]interface{}{
 		"tag":      "direct",
@@ -769,13 +881,17 @@ func CreateXrayConfig(localPort int, listenHost string, server *model.Node, logF
 		},
 	}
 
+	allOutbounds := make([]interface{}, 0, len(outbounds)+1)
+	allOutbounds = append(allOutbounds, outbounds...)
+	allOutbounds = append(allOutbounds, directOutbound)
+
 	// 构建完整配置
 	config := map[string]interface{}{
 		"log":       logConfig,
 		"stats":     map[string]interface{}{},
 		"policy":    policyConfig,
 		"inbounds":  inbounds,
-		"outbounds": []interface{}{outbound, directOutbound},
+		"outbounds": allOutbounds,
 		"routing": map[string]interface{}{
 			"rules":          rules,
 			"domainStrategy": "AsIs",

@@ -24,6 +24,7 @@ type Store struct {
 	AppConfig     *AppConfigStore
 	ProxyStatus   *ProxyStatusStore
 	AccessRecords *AccessRecordsStore
+	Chain         *ChainStore
 }
 
 func NewStore(subscriptionManager *subscription.SubscriptionManager) *Store {
@@ -34,6 +35,7 @@ func NewStore(subscriptionManager *subscription.SubscriptionManager) *Store {
 		AppConfig:     NewAppConfigStore(),
 		ProxyStatus:   NewProxyStatusStore(),
 		AccessRecords: NewAccessRecordsStore(),
+		Chain:         NewChainStore(),
 	}
 	s.Subscriptions.setParentStore(s)
 	return s
@@ -45,6 +47,7 @@ func (s *Store) LoadAll() {
 	s.Layout.Load()
 	s.AppConfig.Load()
 	_ = s.AccessRecords.Load()
+	_ = s.Chain.Load()
 	// 将当前选中的服务器 ID 同步到 AppConfig，供自动启动等逻辑使用
 	if id := s.Nodes.GetSelectedID(); id != "" {
 		_ = s.AppConfig.Set("selectedServerID", id)
@@ -627,6 +630,77 @@ func (acs *AppConfigStore) Set(key, value string) error {
 
 func splitSizeString(s string) []string {
 	return strings.Split(s, ",")
+}
+
+// ChainStore 链式代理节点存储：以有序节点 ID 列表保存在 app_config 的 proxyChain 键（JSON 数组，首=入口/第一跳，末=出口）。
+type ChainStore struct {
+	mu      sync.RWMutex
+	nodeIDs []string
+}
+
+// NewChainStore 创建链式代理存储实例。
+func NewChainStore() *ChainStore {
+	return &ChainStore{
+		nodeIDs: make([]string, 0),
+	}
+}
+
+// Load 从 app_config 加载链式代理节点 ID 列表。
+// 返回：错误（如果有）
+func (cs *ChainStore) Load() error {
+	raw, err := database.GetAppConfig("proxyChain")
+	if err != nil {
+		return fmt.Errorf("链式代理存储: 读取链配置失败: %w", err)
+	}
+	ids := make([]string, 0)
+	if strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+			return fmt.Errorf("链式代理存储: 解析链配置失败: %w", err)
+		}
+	}
+	cs.mu.Lock()
+	cs.nodeIDs = ids
+	cs.mu.Unlock()
+	return nil
+}
+
+// GetNodeIDs 获取当前链式代理节点 ID 列表（有序，首=入口/第一跳，末=出口）。
+// 返回：节点 ID 列表副本
+func (cs *ChainStore) GetNodeIDs() []string {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	result := make([]string, len(cs.nodeIDs))
+	copy(result, cs.nodeIDs)
+	return result
+}
+
+// SetNodeIDs 保存链式代理节点 ID 列表到 app_config 并更新内存缓存（自动去重与去空）。
+// 参数：
+//   - ids: 节点 ID 列表（有序）
+//
+// 返回：错误（如果有）
+func (cs *ChainStore) SetNodeIDs(ids []string) error {
+	clean := make([]string, 0, len(ids))
+	seen := make(map[string]bool)
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		clean = append(clean, id)
+	}
+	raw, err := json.Marshal(clean)
+	if err != nil {
+		return fmt.Errorf("链式代理存储: 序列化链配置失败: %w", err)
+	}
+	if err := database.SetAppConfig("proxyChain", string(raw)); err != nil {
+		return fmt.Errorf("链式代理存储: 保存链配置失败: %w", err)
+	}
+	cs.mu.Lock()
+	cs.nodeIDs = clean
+	cs.mu.Unlock()
+	return nil
 }
 
 type ProxyStatusStore struct {

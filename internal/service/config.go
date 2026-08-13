@@ -269,6 +269,54 @@ func (cs *ConfigService) SetProxyMode(mode string) error {
 	return cs.store.AppConfig.Set("proxyMode", mode)
 }
 
+// ProxyChainModeSingle 单节点模式（默认）：使用节点页选中的单个节点。
+const ProxyChainModeSingle = "single"
+
+// ProxyChainModeChain 链式代理模式：使用 proxyChain 有序节点链（首=入口/第一跳，末=出口）。
+const ProxyChainModeChain = "chain"
+
+// GetProxyChainMode 获取链式代理模式（single / chain）。
+// 返回：链式代理模式（默认 single）
+func (cs *ConfigService) GetProxyChainMode() string {
+	def := database.AppConfigBuiltinDefault("proxyChainMode")
+	if def == "" {
+		def = ProxyChainModeSingle
+	}
+	if cs.store == nil || cs.store.AppConfig == nil {
+		return def
+	}
+	mode, err := cs.store.AppConfig.GetWithDefault("proxyChainMode", def)
+	if err != nil {
+		return def
+	}
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == ProxyChainModeChain {
+		return ProxyChainModeChain
+	}
+	return ProxyChainModeSingle
+}
+
+// SetProxyChainMode 设置链式代理模式（single / chain）。
+// 参数：
+//   - mode: 目标模式（仅识别 chain，其余视为 single）
+//
+// 返回：错误（如果有）
+func (cs *ConfigService) SetProxyChainMode(mode string) error {
+	if cs.store == nil || cs.store.AppConfig == nil {
+		return fmt.Errorf("Store 未初始化")
+	}
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode != ProxyChainModeChain {
+		mode = ProxyChainModeSingle
+	}
+	return cs.store.AppConfig.Set("proxyChainMode", mode)
+}
+
+// IsChainMode 是否启用链式代理模式。
+func (cs *ConfigService) IsChainMode() bool {
+	return cs.GetProxyChainMode() == ProxyChainModeChain
+}
+
 // Get 获取配置值。
 // 参数：
 //   - key: 配置键

@@ -8,7 +8,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -22,6 +21,7 @@ type SettingsMenu int
 const (
 	SettingsMenuAppearance SettingsMenu = iota
 	SettingsMenuDirectRoute
+	SettingsMenuChain
 	SettingsMenuLog
 	SettingsMenuAccessRecord
 	SettingsMenuDiagnostics
@@ -50,6 +50,8 @@ func (m SettingsMenu) String() string {
 		return "外观"
 	case SettingsMenuDirectRoute:
 		return "代理配置"
+	case SettingsMenuChain:
+		return "链式代理"
 	case SettingsMenuLog:
 		return "日志"
 	case SettingsMenuAccessRecord:
@@ -105,7 +107,7 @@ func (f fixedMenuContentLayout) Layout(objects []fyne.CanvasObject, size fyne.Si
 type SettingsPage struct {
 	appState    *AppState
 	content     fyne.CanvasObject
-	menuButtons [6]*widget.Button
+	menuButtons [7]*widget.Button
 	contentCard *fyne.Container
 	currentMenu SettingsMenu
 
@@ -159,10 +161,11 @@ func (sp *SettingsPage) Build() fyne.CanvasObject {
 
 	sp.menuButtons[0] = widget.NewButton("外观", func() { sp.switchMenu(SettingsMenuAppearance) })
 	sp.menuButtons[1] = widget.NewButton("代理配置", func() { sp.switchMenu(SettingsMenuDirectRoute) })
-	sp.menuButtons[2] = widget.NewButton("日志", func() { sp.switchMenu(SettingsMenuLog) })
-	sp.menuButtons[3] = widget.NewButton("访问记录", func() { sp.switchMenu(SettingsMenuAccessRecord) })
-	sp.menuButtons[4] = widget.NewButton("诊断", func() { sp.switchMenu(SettingsMenuDiagnostics) })
-	sp.menuButtons[5] = widget.NewButton("关于", func() { sp.switchMenu(SettingsMenuAbout) })
+	sp.menuButtons[2] = widget.NewButton("链式代理", func() { sp.switchMenu(SettingsMenuChain) })
+	sp.menuButtons[3] = widget.NewButton("日志", func() { sp.switchMenu(SettingsMenuLog) })
+	sp.menuButtons[4] = widget.NewButton("访问记录", func() { sp.switchMenu(SettingsMenuAccessRecord) })
+	sp.menuButtons[5] = widget.NewButton("诊断", func() { sp.switchMenu(SettingsMenuDiagnostics) })
+	sp.menuButtons[6] = widget.NewButton("关于", func() { sp.switchMenu(SettingsMenuAbout) })
 
 	for i := range sp.menuButtons {
 		sp.menuButtons[i].Importance = widget.LowImportance
@@ -176,6 +179,7 @@ func (sp *SettingsPage) Build() fyne.CanvasObject {
 		sp.menuButtons[3],
 		sp.menuButtons[4],
 		sp.menuButtons[5],
+		sp.menuButtons[6],
 	)
 	menuBox := newPaddedWithSize(menuContent, pad)
 	// 极简柔光：浅色模式下侧边栏背景 #F1F5F9，增加物理隔离感
@@ -221,6 +225,8 @@ func (sp *SettingsPage) switchMenu(menu SettingsMenu) {
 			sp.directRouteRoot = sp.buildDirectRouteContent()
 			sp.contentCard.Add(sp.directRouteRoot)
 		}
+	case SettingsMenuChain:
+		sp.contentCard.Add(sp.buildChainContent())
 	case SettingsMenuLog:
 		sp.contentCard.Add(sp.buildLogContent())
 	case SettingsMenuAccessRecord:
@@ -574,7 +580,7 @@ func (sp *SettingsPage) showEditRouteDialog(id widget.ListItemID) {
 	entry := widget.NewEntry()
 	entry.SetText(sp.routesData[id])
 
-	d := dialog.NewForm("编辑路由", "确定", "取消", []*widget.FormItem{
+	sp.appState.Dialogs.ShowFormSized("编辑路由", "确定", "取消", []*widget.FormItem{
 		{Text: "路由", Widget: entry},
 	}, func(ok bool) {
 		if !ok {
@@ -592,9 +598,7 @@ func (sp *SettingsPage) showEditRouteDialog(id widget.ListItemID) {
 				sp.routesList.Refresh()
 			}
 		}
-	}, sp.appState.Window)
-	d.Resize(fyne.NewSize(320, 0))
-	d.Show()
+	}, fyne.NewSize(320, 0))
 }
 
 // parseSingleRoute 解析单条路由输入，返回规范化后的列表。
@@ -683,7 +687,7 @@ func (sp *SettingsPage) buildAccessRecordContent() fyne.CanvasObject {
 		if sp.appState == nil || sp.appState.Window == nil {
 			return
 		}
-		dialog.ShowConfirm("清空访问记录", "确定要清空所有访问记录吗？此操作不可恢复。", func(ok bool) {
+		sp.appState.Dialogs.ShowConfirm("清空访问记录", "确定要清空所有访问记录吗？此操作不可恢复。", func(ok bool) {
 			if !ok {
 				return
 			}
@@ -695,7 +699,7 @@ func (sp *SettingsPage) buildAccessRecordContent() fyne.CanvasObject {
 					sp.accessRecordsList.Refresh()
 				}
 			}
-		}, sp.appState.Window)
+		})
 	})
 	clearBtn.Importance = widget.LowImportance
 
@@ -751,6 +755,77 @@ func collectLabelsFromObject(obj fyne.CanvasObject) []*widget.Label {
 		}
 	}
 	return labels
+}
+
+// buildChainContent 构建「链式代理」菜单内容：模式单选 + 打开链式配置入口 + 当前链概览。
+func (sp *SettingsPage) buildChainContent() fyne.CanvasObject {
+	titleLabel := widget.NewLabelWithStyle("链式代理", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+
+	descLabel := widget.NewLabel("链式代理将多个节点按顺序串联：首节点为入口（第一跳），末节点为出口，流量依次经过链上每个节点。在配置页中从右侧节点列表拖拽节点到左侧链即可。")
+	descLabel.Wrapping = fyne.TextWrapWord
+
+	// 模式单选：单节点 / 链式（先 SetSelected 再挂 OnChanged，避免初始化触发写配置）
+	modeRadio := widget.NewRadioGroup([]string{"单节点模式", "链式模式"}, nil)
+	chainMode := sp.appState != nil && sp.appState.ConfigService != nil && sp.appState.ConfigService.IsChainMode()
+	if chainMode {
+		modeRadio.SetSelected("链式模式")
+	} else {
+		modeRadio.SetSelected("单节点模式")
+	}
+	modeRadio.OnChanged = func(value string) {
+		if sp.appState == nil || sp.appState.ConfigService == nil {
+			return
+		}
+		mode := service.ProxyChainModeSingle
+		if value == "链式模式" {
+			mode = service.ProxyChainModeChain
+		}
+		_ = sp.appState.ConfigService.SetProxyChainMode(mode)
+	}
+	modeHint := widget.NewLabel("切换模式后需重新启动代理生效；在链式配置页点「保存」也会自动切换为链式模式并启动。")
+	modeHint.Wrapping = fyne.TextWrapWord
+	modeHint.Importance = widget.LowImportance
+
+	openBtn := widget.NewButtonWithIcon("打开链式代理配置", theme.ListIcon(), func() {
+		if sp.appState != nil && sp.appState.MainWindow != nil {
+			sp.appState.MainWindow.ShowChainPage()
+		}
+	})
+	openBtn.Importance = widget.HighImportance
+
+	// 当前链概览
+	chainInfo := widget.NewLabel("")
+	chainInfo.Wrapping = fyne.TextWrapWord
+	if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Chain != nil {
+		ids := sp.appState.Store.Chain.GetNodeIDs()
+		if len(ids) == 0 {
+			chainInfo.SetText("当前未配置链式节点。")
+		} else {
+			names := make([]string, 0, len(ids))
+			for _, id := range ids {
+				if sp.appState.Store.Nodes != nil {
+					if node, err := sp.appState.Store.Nodes.Get(id); err == nil {
+						names = append(names, node.Name)
+						continue
+					}
+				}
+				names = append(names, id)
+			}
+			chainInfo.SetText("当前链（入口 → 出口）: " + strings.Join(names, " → "))
+		}
+	}
+
+	return container.NewVBox(
+		titleLabel,
+		widget.NewSeparator(),
+		descLabel,
+		widget.NewSeparator(),
+		modeRadio,
+		modeHint,
+		widget.NewSeparator(),
+		openBtn,
+		chainInfo,
+	)
 }
 
 // buildAboutContent 构建设置「关于」内容区。

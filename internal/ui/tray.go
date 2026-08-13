@@ -323,6 +323,18 @@ func (tm *TrayManager) showMainWindow() {
 	}
 	tm.window.Show()
 	tm.window.RequestFocus()
+	tm.dismissStaleFailureDialogs()
+}
+
+// dismissStaleFailureDialogs 重新打开窗口时，若代理已恢复运行，关闭残留的失败/告警弹窗
+// （如连接中断、启动失败），避免窗口重新出现时还叠着旧的失效弹窗。
+func (tm *TrayManager) dismissStaleFailureDialogs() {
+	if tm.appState == nil || tm.appState.Dialogs == nil {
+		return
+	}
+	if tm.appState.XrayInstance != nil && tm.appState.XrayInstance.IsRunning() {
+		tm.appState.Dialogs.DismissFailure()
+	}
 }
 
 // onNodeSelected 托盘选中节点：未运行则启动，已运行则切换重连；失败时弹出主窗口。
@@ -371,6 +383,7 @@ func (tm *TrayManager) createTrayMenu(desk desktop.App) {
 		fyne.NewMenuItem("显示窗口", func() {
 			tm.window.Show()
 			tm.window.RequestFocus()
+			tm.dismissStaleFailureDialogs()
 		}),
 		fyne.NewMenuItemSeparator(),
 	}

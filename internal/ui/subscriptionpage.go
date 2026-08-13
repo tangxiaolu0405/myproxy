@@ -8,7 +8,6 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -150,7 +149,7 @@ func (sp *SubscriptionPage) showAddSubscriptionDialog() {
 		{Text: "链接", Widget: urlEntry},
 	}
 
-	d := dialog.NewForm("添加新订阅", "确定添加", "取消", items, func(ok bool) {
+	sp.appState.Dialogs.ShowFormSized("添加新订阅", "确定添加", "取消", items, func(ok bool) {
 		if !ok || urlEntry.Text == "" {
 			return
 		}
@@ -160,13 +159,13 @@ func (sp *SubscriptionPage) showAddSubscriptionDialog() {
 			if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Subscriptions != nil {
 				_, err := sp.appState.Store.Subscriptions.Add(urlEntry.Text, labelEntry.Text)
 				if err != nil {
-					fyne.Do(func() { dialog.ShowError(err, sp.appState.Window) })
+					sp.appState.Dialogs.ShowError(err)
 					return
 				}
 
 				// 立即执行一次抓取（通过 Store）
 				if err := sp.appState.Store.Subscriptions.Fetch(urlEntry.Text, labelEntry.Text); err != nil {
-					fyne.Do(func() { dialog.ShowError(err, sp.appState.Window) })
+					sp.appState.Dialogs.ShowError(err)
 					return
 				}
 			} else {
@@ -174,7 +173,7 @@ func (sp *SubscriptionPage) showAddSubscriptionDialog() {
 				if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Subscriptions != nil {
 					_, err := sp.appState.Store.Subscriptions.Add(urlEntry.Text, labelEntry.Text)
 					if err != nil {
-						fyne.Do(func() { dialog.ShowError(err, sp.appState.Window) })
+						sp.appState.Dialogs.ShowError(err)
 						return
 					}
 				}
@@ -183,10 +182,7 @@ func (sp *SubscriptionPage) showAddSubscriptionDialog() {
 			// 更新绑定数据，自动刷新 UI
 			fyne.Do(func() { sp.Refresh() })
 		}()
-	}, sp.appState.Window)
-
-	d.Resize(fyne.NewSize(420, 240))
-	d.Show()
+	}, fyne.NewSize(420, 240))
 }
 
 func (sp *SubscriptionPage) batchUpdateSubscriptions() {
@@ -197,7 +193,7 @@ func (sp *SubscriptionPage) batchUpdateSubscriptions() {
 	if len(subscriptions) == 0 {
 		return
 	}
-	dialog.ShowConfirm("批量更新", "确认更新所有订阅列表？", func(ok bool) {
+	sp.appState.Dialogs.ShowConfirm("批量更新", "确认更新所有订阅列表？", func(ok bool) {
 		if !ok {
 			return
 		}
@@ -209,15 +205,13 @@ func (sp *SubscriptionPage) batchUpdateSubscriptions() {
 			for _, sub := range subs {
 				if sp.appState != nil && sp.appState.SubscriptionService != nil {
 					if err := sp.appState.SubscriptionService.UpdateByID(sub.ID); err != nil {
-						fyne.Do(func() {
-							dialog.ShowError(fmt.Errorf("更新订阅失败: %w", err), sp.appState.Window)
-						})
+						sp.appState.Dialogs.ShowError(fmt.Errorf("更新订阅失败: %w", err))
 					}
 				}
 			}
 			fyne.Do(func() { sp.Refresh() })
 		}()
-	}, sp.appState.Window)
+	})
 }
 
 // --- SubscriptionCard 内部组件 ---
@@ -342,7 +336,7 @@ func (card *SubscriptionCard) Update(sub *database.Subscription) {
 				if err := card.page.appState.SubscriptionService.UpdateByID(sub.ID); err != nil {
 					fyne.Do(func() {
 						card.updateBtn.Enable()
-						dialog.ShowError(fmt.Errorf("更新订阅失败: %w", err), card.page.appState.Window)
+						card.page.appState.Dialogs.ShowError(fmt.Errorf("更新订阅失败: %w", err))
 					})
 					return
 				}
@@ -359,12 +353,12 @@ func (card *SubscriptionCard) Update(sub *database.Subscription) {
 
 	card.deleteBtn.OnTapped = func() {
 		msg := fmt.Sprintf("确定删除订阅 '%s' 吗？\n下属的 %d 个节点将被移除。", sub.Label, nodeCount)
-		dialog.ShowConfirm("删除确认", msg, func(ok bool) {
+		card.page.appState.Dialogs.ShowConfirm("删除确认", msg, func(ok bool) {
 			if ok {
 				// 通过 Store 删除订阅（会自动更新数据库和绑定）
 				if card.page.appState != nil && card.page.appState.Store != nil && card.page.appState.Store.Subscriptions != nil {
 					if err := card.page.appState.Store.Subscriptions.Delete(sub.ID); err != nil {
-						dialog.ShowError(err, card.page.appState.Window)
+						card.page.appState.Dialogs.ShowError(err)
 						return
 					}
 				} else {
@@ -376,7 +370,7 @@ func (card *SubscriptionCard) Update(sub *database.Subscription) {
 				// 更新绑定数据，自动刷新 UI
 				card.page.Refresh()
 			}
-		}, card.page.appState.Window)
+		})
 	}
 }
 
@@ -393,7 +387,7 @@ func (card *SubscriptionCard) showEditDialog() {
 		{Text: "链接", Widget: urlEntry},
 	}
 
-	d := dialog.NewForm("编辑订阅", "确认", "取消", items, func(ok bool) {
+	card.page.appState.Dialogs.ShowFormSized("编辑订阅", "确认", "取消", items, func(ok bool) {
 		if !ok || urlEntry.Text == "" {
 			return
 		}
@@ -401,7 +395,7 @@ func (card *SubscriptionCard) showEditDialog() {
 		// 通过 Store 更新订阅（会自动更新数据库和绑定）
 		if card.page.appState != nil && card.page.appState.Store != nil && card.page.appState.Store.Subscriptions != nil {
 			if err := card.page.appState.Store.Subscriptions.Update(card.sub.ID, urlEntry.Text, labelEntry.Text); err != nil {
-				dialog.ShowError(err, card.page.appState.Window)
+				card.page.appState.Dialogs.ShowError(err)
 				return
 			}
 		} else {
@@ -412,10 +406,7 @@ func (card *SubscriptionCard) showEditDialog() {
 		}
 		// 更新绑定数据，自动刷新 UI
 		card.page.Refresh()
-	}, card.page.appState.Window)
-
-	d.Resize(fyne.NewSize(420, 240))
-	d.Show()
+	}, fyne.NewSize(420, 240))
 }
 
 func (card *SubscriptionCard) formatTime(t time.Time) string {

@@ -8,11 +8,11 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/model"
+	"myproxy.com/p/internal/service"
 )
 
 // NodePage 管理服务器列表的显示和操作。
@@ -346,6 +346,14 @@ func (np *NodePage) onNodeSelected(id widget.ListItemID) {
 		}
 	}
 
+	// 选中节点即视为使用单节点模式：若当前为链式模式且代理在运行，先停止链式代理并切回单节点
+	if np.appState != nil && np.appState.ConfigService != nil && np.appState.ConfigService.IsChainMode() {
+		if np.appState.MainWindow != nil && np.appState.XrayInstance != nil && np.appState.XrayInstance.IsRunning() {
+			np.appState.MainWindow.StopProxy()
+		}
+		_ = np.appState.ConfigService.SetProxyChainMode(service.ProxyChainModeSingle)
+	}
+
 	// 更新选中服务器标签
 	np.updateSelectedServerLabel()
 
@@ -432,11 +440,9 @@ func (np *NodePage) onTestSpeed(id widget.ListItemID) {
 			if np.appState != nil {
 				np.appState.AppendLog("ERROR", "ping", fmt.Sprintf("服务器 %s 测速失败: %v", node.Name, err))
 			}
-			fyne.Do(func() {
-				if np.appState != nil && np.appState.Window != nil {
-					dialog.ShowError(fmt.Errorf("测速失败: %w", err), np.appState.Window)
-				}
-			})
+			if np.appState != nil && np.appState.Dialogs != nil {
+				np.appState.Dialogs.ShowError(fmt.Errorf("测速失败: %w", err))
+			}
 			return
 		}
 
@@ -461,9 +467,9 @@ func (np *NodePage) onTestSpeed(id widget.ListItemID) {
 			if np.appState != nil {
 				np.appState.UpdateProxyStatus()
 			}
-			if np.appState != nil && np.appState.Window != nil {
+			if np.appState != nil && np.appState.Dialogs != nil {
 				message := fmt.Sprintf("节点: %s\n延迟: %d ms", node.Name, delay)
-				dialog.ShowInformation("测速完成", message, np.appState.Window)
+				np.appState.Dialogs.ShowInfo("测速完成", message)
 			}
 		})
 	}()
@@ -582,9 +588,9 @@ func (np *NodePage) logAndShowError(message string, err error) {
 	if np.appState != nil && np.appState.Logger != nil {
 		np.appState.Logger.Error("%s: %v", message, err)
 	}
-	if np.appState != nil && np.appState.Window != nil {
+	if np.appState != nil && np.appState.Dialogs != nil {
 		errorMsg := fmt.Errorf("%s: %w", message, err)
-		dialog.ShowError(errorMsg, np.appState.Window)
+		np.appState.Dialogs.ShowError(errorMsg)
 	}
 }
 
@@ -679,9 +685,9 @@ func (np *NodePage) onTestAll() {
 		// 更新UI（需要在主线程中执行）
 		fyne.Do(func() {
 			np.Refresh()
-			if np.appState != nil && np.appState.Window != nil {
+			if np.appState != nil && np.appState.Dialogs != nil {
 				message := fmt.Sprintf("测速完成\n成功: %d 个\n失败: %d 个\n共测试: %d 个服务器", successCount, failCount, len(results))
-				dialog.ShowInformation("批量测速完成", message, np.appState.Window)
+				np.appState.Dialogs.ShowInfo("批量测速完成", message)
 			}
 		})
 	}()
@@ -925,8 +931,8 @@ func (np *NodePage) toggleFavorite(nodeID string, favorited bool) {
 		return
 	}
 	if err := np.appState.Store.Nodes.SetFavorited(nodeID, favorited); err != nil {
-		if np.appState.Window != nil {
-			dialog.ShowError(err, np.appState.Window)
+		if np.appState.Dialogs != nil {
+			np.appState.Dialogs.ShowError(err)
 		}
 		return
 	}
@@ -979,7 +985,9 @@ func (s *ServerListItem) showQuickMenu(server model.Node) {
 				server.Name, server.Addr, server.Port, server.ProtocolType)
 			if s.panel != nil && s.panel.appState != nil && s.panel.appState.Window != nil {
 				s.panel.appState.Window.Clipboard().SetContent(info)
-				dialog.ShowInformation("提示", "节点信息已复制到剪贴板", s.panel.appState.Window)
+				if s.panel.appState.Dialogs != nil {
+					s.panel.appState.Dialogs.ShowInfo("提示", "节点信息已复制到剪贴板")
+				}
 			}
 		}),
 	)

@@ -10,14 +10,13 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"myproxy.com/p/internal/database"
 	"myproxy.com/p/internal/logging"
 	"myproxy.com/p/internal/service"
 	"myproxy.com/p/internal/store"
-	"myproxy.com/p/internal/systemproxy"
 	"myproxy.com/p/internal/subscription"
+	"myproxy.com/p/internal/systemproxy"
 	"myproxy.com/p/internal/utils"
 	"myproxy.com/p/internal/xray"
 )
@@ -42,7 +41,8 @@ type AppState struct {
 	DiagnosticsService  *service.DiagnosticsService
 	HealthCheckService  *service.HealthCheckService
 	XrayInstance        *xray.XrayInstance
-	LogsPanel           *LogsPanel // 日志面板，仅设置页使用；OnLogLine 分发到此
+	Dialogs             *DialogManager // 统一弹窗管理器：避免弹窗堆叠与残留失效弹窗
+	LogsPanel           *LogsPanel     // 日志面板，仅设置页使用；OnLogLine 分发到此
 	ProxyStatusBinding  binding.String
 	PortBinding         binding.String
 	ServerNameBinding   binding.String
@@ -84,6 +84,7 @@ func NewAppState(appVersion string) *AppState {
 		XrayControlService:  service.NewXrayControlService(dataStore, configService, nil, nil),
 		AccessRecordService: service.NewAccessRecordService(dataStore),
 		DiagnosticsService:  service.NewDiagnosticsService(configService, dataStore),
+		Dialogs:             NewDialogManager(),
 	}
 
 	appState.HealthCheckService = service.NewHealthCheckService(
@@ -98,9 +99,12 @@ func NewAppState(appVersion string) *AppState {
 				appState.SafeLogger.Warn(message)
 			}
 			appState.AppendLog("WARN", "health", message)
+			// 统一经弹窗管理器展示（同类弹窗自动替换，不堆叠；代理恢复后由 DismissFailure 关闭）
+			if appState.Dialogs != nil {
+				appState.Dialogs.ShowAlert("连接中断", message)
+			}
 			fyne.Do(func() {
 				if appState.Window != nil {
-					dialog.ShowInformation("连接中断", message, appState.Window)
 					appState.Window.Show()
 					appState.Window.RequestFocus()
 				}
@@ -144,6 +148,23 @@ func (a *AppState) updateStatusBindings() {
 		return
 	}
 	a.Store.ProxyStatus.UpdateProxyStatus(a.XrayInstance, a.Store.Nodes, a.EffectiveLocalInboundPort())
+	// 链式模式：状态栏显示链（入口 → 出口），而非单个选中节点
+	if a.ConfigService != nil && a.ConfigService.IsChainMode() && a.Store.Chain != nil {
+		ids := a.Store.Chain.GetNodeIDs()
+		names := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if a.Store.Nodes != nil {
+				if node, err := a.Store.Nodes.Get(id); err == nil {
+					names = append(names, node.Name)
+					continue
+				}
+			}
+			names = append(names, id)
+		}
+		if len(names) > 0 {
+			a.Store.ProxyStatus.ServerNameBinding.Set("链: " + strings.Join(names, " → "))
+		}
+	}
 }
 
 func (a *AppState) UpdateProxyStatus() {
@@ -179,6 +200,11 @@ func (a *AppState) InitApp() error {
 	}
 
 	a.Window = a.App.NewWindow("myproxy")
+
+	// 弹窗管理器绑定窗口：后续所有弹窗统一经 DialogManager 展示，避免堆叠
+	if a.Dialogs != nil {
+		a.Dialogs.SetWindow(a.Window)
+	}
 
 	// 必须先加载数据库中的 app_config（含 windowSize），再按配置 Resize，否则会误用默认尺寸并在后续 SetContent 时写回库覆盖用户值。
 	if a.Store != nil {
@@ -429,6 +455,15 @@ func (a *AppState) autoLoadProxyConfig() error {
 		return nil
 	}
 
+	// 链式模式：无需选中单节点，直接按已保存的链启动（链为空/不足 2 节点时给出错误）
+	if a.ConfigService != nil && a.ConfigService.IsChainMode() {
+		if a.Store.Chain == nil || len(a.Store.Chain.GetNodeIDs()) < 2 {
+			return fmt.Errorf("应用状态: 链式模式未配置有效链（至少 2 个节点）")
+		}
+		a.AppendLog("INFO", "app", "正在自动启动链式代理服务...")
+		return a.startProxyWithConfig()
+	}
+
 	selectedServerID, err := a.Store.AppConfig.GetWithDefault("selectedServerID", database.AppConfigBuiltinDefault("selectedServerID"))
 	if err != nil || selectedServerID == "" {
 		return fmt.Errorf("应用状态: 未找到保存的选中服务器")
@@ -444,6 +479,11 @@ func (a *AppState) autoLoadProxyConfig() error {
 		return fmt.Errorf("应用状态: XrayControlService 未初始化")
 	}
 
+	return a.startProxyWithConfig()
+}
+
+// startProxyWithConfig 使用 XrayControlService 启动代理并更新实例引用（自动加载场景复用）。
+func (a *AppState) startProxyWithConfig() error {
 	unifiedLogPath := ""
 	if a.Logger != nil {
 		unifiedLogPath = a.Logger.GetLogFilePath()

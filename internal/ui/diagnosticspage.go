@@ -9,7 +9,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"myproxy.com/p/internal/model"
@@ -411,8 +410,8 @@ func (dp *DiagnosticsPage) setExportBusy(busy bool) {
 }
 
 func (dp *DiagnosticsPage) showError(err error) {
-	if dp.appState != nil && dp.appState.Window != nil {
-		dialog.ShowError(err, dp.appState.Window)
+	if dp.appState != nil && dp.appState.Dialogs != nil {
+		dp.appState.Dialogs.ShowError(err)
 	}
 	if dp.appState != nil {
 		dp.appState.AppendLog("ERROR", "app", err.Error())

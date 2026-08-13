@@ -2,8 +2,10 @@ package service
 
 import (
 	"fmt"
+	"strings"
 
 	"myproxy.com/p/internal/database"
+	"myproxy.com/p/internal/model"
 	"myproxy.com/p/internal/store"
 	"myproxy.com/p/internal/utils"
 	"myproxy.com/p/internal/xray"
@@ -39,7 +41,8 @@ type StartProxyResult struct {
 	Error        error              // 错误（如果有）
 }
 
-// StartProxy 启动代理（使用当前选中的节点）。
+// StartProxy 启动代理。链式代理模式（IsChainMode）下使用 proxyChain 有序节点链，
+// 否则使用当前选中的单个节点。
 // 根据架构规范，xray 是工具层，实例生命周期 = 代理运行生命周期。
 // 启动代理时创建实例，切换节点时销毁旧实例并创建新实例，停止代理时销毁实例。
 // 参数：
@@ -55,13 +58,45 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 		}
 	}
 
-	// 从 Store 获取当前选中的节点
-	selectedNode := xcs.store.Nodes.GetSelected()
-	if selectedNode == nil {
-		return &StartProxyResult{
-			LogMessage: "启动代理失败: 未选中服务器",
-			Error:      fmt.Errorf("Xray控制服务: 未选中服务器"),
+	// 链式代理模式：解析有序节点链；否则使用当前选中的单个节点
+	chainMode := xcs.config != nil && xcs.config.IsChainMode()
+	var selectedNode *model.Node
+	var chainNodes []*model.Node
+	var chainName string
+	if chainMode {
+		if xcs.store.Chain == nil {
+			return &StartProxyResult{
+				LogMessage: "启动链式代理失败: 链式代理存储未初始化",
+				Error:      fmt.Errorf("Xray控制服务: 链式代理存储未初始化"),
+			}
 		}
+		nodes, err := resolveChainNodes(xcs.store.Chain.GetNodeIDs(), xcs.store)
+		if err != nil {
+			logMsg := fmt.Sprintf("启动链式代理失败: %v", err)
+			if xcs.logCallback != nil {
+				xcs.logCallback("ERROR", logMsg)
+			}
+			return &StartProxyResult{
+				LogMessage: logMsg,
+				Error:      fmt.Errorf("Xray控制服务: %w", err),
+			}
+		}
+		chainNodes = nodes
+		selectedNode = nodes[len(nodes)-1] // 出口节点（用于端口/状态展示）
+		names := make([]string, len(nodes))
+		for i, n := range nodes {
+			names[i] = n.Name
+		}
+		chainName = strings.Join(names, " → ")
+	} else {
+		selectedNode = xcs.store.Nodes.GetSelected()
+		if selectedNode == nil {
+			return &StartProxyResult{
+				LogMessage: "启动代理失败: 未选中服务器",
+				Error:      fmt.Errorf("Xray控制服务: 未选中服务器"),
+			}
+		}
+		chainName = selectedNode.Name
 	}
 
 	// 如果已有代理在运行，先停止并销毁实例
@@ -80,7 +115,7 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 
 	// 记录开始启动日志
 	if xcs.logCallback != nil {
-		xcs.logCallback("INFO", fmt.Sprintf("开始启动xray-core代理: %s", selectedNode.Name))
+		xcs.logCallback("INFO", fmt.Sprintf("开始启动xray-core代理: %s", chainName))
 	}
 
 	// 读取直连路由配置：如果用户配置为空，则使用默认路由
@@ -130,7 +165,13 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 	}
 
 	// 创建 xray 配置（不设日志路径，由劫持 handler 落盘）
-	xrayConfigJSON, err := xray.CreateXrayConfig(proxyPort, listenHost, selectedNode, "", routing, enableTun)
+	var xrayConfigJSON []byte
+	var err error
+	if chainMode {
+		xrayConfigJSON, err = xray.CreateChainXrayConfig(proxyPort, listenHost, chainNodes, "", routing, enableTun)
+	} else {
+		xrayConfigJSON, err = xray.CreateXrayConfig(proxyPort, listenHost, selectedNode, "", routing, enableTun)
+	}
 	if err != nil {
 		logMsg := fmt.Sprintf("创建xray配置失败: %v", err)
 		if xcs.logCallback != nil {
@@ -144,7 +185,7 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 
 	// 记录配置创建成功日志
 	if xcs.logCallback != nil {
-		xcs.logCallback("DEBUG", fmt.Sprintf("xray配置已创建: %s", selectedNode.Name))
+		xcs.logCallback("DEBUG", fmt.Sprintf("xray配置已创建: %s", chainName))
 	}
 
 	// 创建 xray 实例的日志回调：优先用 rawLogCallback（落盘+展示+解析），否则用 logCallback
@@ -184,10 +225,18 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 	xrayInstance.SetPort(proxyPort)
 
 	// 记录日志（统一日志记录）
-	logMsg := fmt.Sprintf("xray-core代理已启动: %s (端口: %d)", selectedNode.Name, proxyPort)
+	logMsg := fmt.Sprintf("xray-core代理已启动: %s (端口: %d)", chainName, proxyPort)
 	if xcs.logCallback != nil {
 		xcs.logCallback("INFO", logMsg)
-		xcs.logCallback("INFO", fmt.Sprintf("服务器信息: %s:%d, 协议: %s", selectedNode.Addr, selectedNode.Port, selectedNode.ProtocolType))
+		if chainMode {
+			parts := make([]string, 0, len(chainNodes))
+			for _, n := range chainNodes {
+				parts = append(parts, fmt.Sprintf("%s:%d(%s)", n.Addr, n.Port, n.ProtocolType))
+			}
+			xcs.logCallback("INFO", fmt.Sprintf("链式代理: %s", strings.Join(parts, " → ")))
+		} else {
+			xcs.logCallback("INFO", fmt.Sprintf("服务器信息: %s:%d, 协议: %s", selectedNode.Addr, selectedNode.Port, selectedNode.ProtocolType))
+		}
 	}
 
 	return &StartProxyResult{
@@ -195,6 +244,39 @@ func (xcs *XrayControlService) StartProxy(oldInstance *xray.XrayInstance, logFil
 		LogMessage:   logMsg,
 		Error:        nil,
 	}
+}
+
+// resolveChainNodes 根据节点 ID 列表解析链式代理节点。
+// 校验：至少 2 个节点、节点必须存在、不允许重复。
+// 参数：
+//   - ids: 有序节点 ID 列表（首=入口/第一跳，末=出口）
+//   - st: Store 实例，用于查找节点
+//
+// 返回：有序节点列表和错误（如果有）
+func resolveChainNodes(ids []string, st *store.Store) ([]*model.Node, error) {
+	if st == nil || st.Nodes == nil {
+		return nil, fmt.Errorf("链式代理: Store 未初始化")
+	}
+	if len(ids) < 2 {
+		return nil, fmt.Errorf("链式代理至少需要 2 个节点，当前 %d 个", len(ids))
+	}
+	seen := make(map[string]bool, len(ids))
+	nodes := make([]*model.Node, 0, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return nil, fmt.Errorf("链式代理包含空节点 ID")
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("链式代理包含重复节点")
+		}
+		seen[id] = true
+		node, err := st.Nodes.Get(id)
+		if err != nil {
+			return nil, fmt.Errorf("链式代理节点不存在: %s", id)
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, nil
 }
 
 // StopProxyResult 停止代理操作结果。
