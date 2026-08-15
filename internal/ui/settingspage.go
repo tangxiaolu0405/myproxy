@@ -252,72 +252,31 @@ func (sp *SettingsPage) updateMenuState() {
 	}
 }
 
-// buildThemePreview 构建主题预览区域
-func buildThemePreview(appState *AppState) fyne.CanvasObject {
-	pad := innerPadding(appState)
-	// 创建预览卡片
-	previewInner := container.NewVBox(
-		// 预览标题
-		widget.NewLabelWithStyle("主题预览", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		widget.NewSeparator(),
-		// 预览元素：按钮
-		widget.NewLabel("按钮预览"),
-		container.NewHBox(
-			widget.NewButton("普通按钮", nil),
-			widget.NewButtonWithIcon("图标按钮", theme.InfoIcon(), nil),
-		),
-		// 预览元素：输入框
-		widget.NewLabel("输入框预览"),
-		func() *widget.Entry {
-			entry := widget.NewEntry()
-			entry.SetPlaceHolder("请输入内容...")
-			return entry
-		}(),
-		// 预览元素：复选框
-		widget.NewLabel("复选框预览"),
-		widget.NewCheck("选项 1", nil),
-		// 预览元素：标签
-		widget.NewLabel("文本预览：这是一段示例文本"),
-	)
-
-	// 添加边框和内边距
-	previewCard := newPaddedWithSize(previewInner, pad)
-
-	// 创建一个带有最小大小的容器
-	minSizeContainer := container.NewMax(previewCard)
-	minSizeContainer.Resize(fyne.NewSize(0, 200))
-
-	return minSizeContainer
-}
-
-// buildAppearanceContent 构建设置「外观」内容区。
+// buildAppearanceContent 构建设置「外观」内容区：
+// 可视化主题选择卡片（深色/浅色/跟随系统，各带迷你窗口缩略图，点击即切换生效）
+// + 当前主题下的主界面实时预览。
 func (sp *SettingsPage) buildAppearanceContent() fyne.CanvasObject {
-	themeOptions := []string{ThemeDisplayDark, ThemeDisplayLight, ThemeDisplaySystem}
-	themeSelect := widget.NewSelect(themeOptions, func(s string) {
-		sp.onThemeChanged(s)
-	})
-
-	// 根据当前配置设置选中项
-	currentThemeDisplay := ThemeDisplayDark
+	currentTheme := ThemeDark
 	if sp.appState != nil {
-		t := sp.appState.GetTheme()
-		switch t {
-		case ThemeLight:
-			currentThemeDisplay = ThemeDisplayLight
-		case ThemeSystem:
-			currentThemeDisplay = ThemeDisplaySystem
-		default:
-			currentThemeDisplay = ThemeDisplayDark
-		}
+		currentTheme = sp.appState.GetTheme()
 	}
-	themeSelect.SetSelected(currentThemeDisplay)
+
+	darkCard := sp.buildThemeCard(ThemeDisplayDark, buildThemeThumbnail(ThemeDisplayDark), currentTheme == ThemeDark)
+	lightCard := sp.buildThemeCard(ThemeDisplayLight, buildThemeThumbnail(ThemeDisplayLight), currentTheme == ThemeLight)
+	systemCard := sp.buildThemeCard(ThemeDisplaySystem, buildThemeThumbnail(ThemeDisplaySystem), currentTheme == ThemeSystem)
+	cards := container.NewGridWithColumns(3, darkCard, lightCard, systemCard)
+
+	hint := widget.NewLabel("点击卡片立即切换主题，界面将即时应用新配色")
+	hint.Wrapping = fyne.TextWrapWord
+	hint.Importance = widget.LowImportance
 
 	return container.NewVBox(
-		widget.NewLabel("主题"),
-		themeSelect,
-		// 添加主题预览区域
+		NewTitleLabel("主题"),
+		hint,
+		cards,
 		widget.NewSeparator(),
-		buildThemePreview(sp.appState),
+		NewTitleLabel("主界面预览"),
+		buildMainInterfacePreview(sp.appState),
 	)
 }
 
@@ -757,15 +716,14 @@ func collectLabelsFromObject(obj fyne.CanvasObject) []*widget.Label {
 	return labels
 }
 
-// buildChainContent 构建「链式代理」菜单内容：模式单选 + 打开链式配置入口 + 当前链概览。
+// buildChainContent 构建「链式代理」菜单内容：模式单选（单行排列）+ 打开链式配置入口 + 当前链概览。
+// 点击模式单选即保存并自动重启代理生效（无需额外说明）。
 func (sp *SettingsPage) buildChainContent() fyne.CanvasObject {
 	titleLabel := widget.NewLabelWithStyle("链式代理", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	descLabel := widget.NewLabel("链式代理将多个节点按顺序串联：首节点为入口（第一跳），末节点为出口，流量依次经过链上每个节点。在配置页中从右侧节点列表拖拽节点到左侧链即可。")
-	descLabel.Wrapping = fyne.TextWrapWord
-
-	// 模式单选：单节点 / 链式（先 SetSelected 再挂 OnChanged，避免初始化触发写配置）
+	// 模式单选（单行排列）：单节点 / 链式（先 SetSelected 再挂 OnChanged，避免初始化触发写配置）
 	modeRadio := widget.NewRadioGroup([]string{"单节点模式", "链式模式"}, nil)
+	modeRadio.Horizontal = true
 	chainMode := sp.appState != nil && sp.appState.ConfigService != nil && sp.appState.ConfigService.IsChainMode()
 	if chainMode {
 		modeRadio.SetSelected("链式模式")
@@ -780,11 +738,17 @@ func (sp *SettingsPage) buildChainContent() fyne.CanvasObject {
 		if value == "链式模式" {
 			mode = service.ProxyChainModeChain
 		}
-		_ = sp.appState.ConfigService.SetProxyChainMode(mode)
+		if err := sp.appState.ConfigService.SetProxyChainMode(mode); err != nil {
+			if sp.appState.Dialogs != nil {
+				sp.appState.Dialogs.ShowError(err)
+			}
+			return
+		}
+		// 点击即自动重启生效（未运行时下次启动自动套用新模式）
+		if sp.appState.MainWindow != nil {
+			sp.appState.MainWindow.RestartXrayIfRunningForConfigChange("代理模式")
+		}
 	}
-	modeHint := widget.NewLabel("切换模式后需重新启动代理生效；在链式配置页点「保存」也会自动切换为链式模式并启动。")
-	modeHint.Wrapping = fyne.TextWrapWord
-	modeHint.Importance = widget.LowImportance
 
 	openBtn := widget.NewButtonWithIcon("打开链式代理配置", theme.ListIcon(), func() {
 		if sp.appState != nil && sp.appState.MainWindow != nil {
@@ -793,13 +757,13 @@ func (sp *SettingsPage) buildChainContent() fyne.CanvasObject {
 	})
 	openBtn.Importance = widget.HighImportance
 
-	// 当前链概览
+	// 当前链概览：节点名称 → 节点名称
 	chainInfo := widget.NewLabel("")
 	chainInfo.Wrapping = fyne.TextWrapWord
 	if sp.appState != nil && sp.appState.Store != nil && sp.appState.Store.Chain != nil {
 		ids := sp.appState.Store.Chain.GetNodeIDs()
 		if len(ids) == 0 {
-			chainInfo.SetText("当前未配置链式节点。")
+			chainInfo.SetText("尚未配置链式节点")
 		} else {
 			names := make([]string, 0, len(ids))
 			for _, id := range ids {
@@ -811,17 +775,14 @@ func (sp *SettingsPage) buildChainContent() fyne.CanvasObject {
 				}
 				names = append(names, id)
 			}
-			chainInfo.SetText("当前链（入口 → 出口）: " + strings.Join(names, " → "))
+			chainInfo.SetText(strings.Join(names, " → "))
 		}
 	}
 
 	return container.NewVBox(
 		titleLabel,
 		widget.NewSeparator(),
-		descLabel,
-		widget.NewSeparator(),
 		modeRadio,
-		modeHint,
 		widget.NewSeparator(),
 		openBtn,
 		chainInfo,

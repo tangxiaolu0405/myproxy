@@ -48,6 +48,8 @@ func (s *Store) LoadAll() {
 	s.AppConfig.Load()
 	_ = s.AccessRecords.Load()
 	_ = s.Chain.Load()
+	// 清理链中已不存在的节点 ID（订阅刷新可能使旧 ID 失效），避免界面显示裸 UUID
+	s.Chain.PruneInvalid(s.Nodes)
 	// 将当前选中的服务器 ID 同步到 AppConfig，供自动启动等逻辑使用
 	if id := s.Nodes.GetSelectedID(); id != "" {
 		_ = s.AppConfig.Set("selectedServerID", id)
@@ -672,6 +674,33 @@ func (cs *ChainStore) GetNodeIDs() []string {
 	result := make([]string, len(cs.nodeIDs))
 	copy(result, cs.nodeIDs)
 	return result
+}
+
+// PruneInvalid 移除链中在当前节点列表中不存在的 ID，并将清理结果持久化。
+// 订阅刷新可能重新生成节点 ID，历史链中会残留失效 ID；加载时清理，
+// 避免界面（抽屉、设置概览、链配置页）显示裸 UUID。返回被移除的数量。
+func (cs *ChainStore) PruneInvalid(ns *NodesStore) int {
+	if cs == nil || ns == nil {
+		return 0
+	}
+	cs.mu.RLock()
+	ids := append([]string{}, cs.nodeIDs...)
+	cs.mu.RUnlock()
+	if len(ids) == 0 {
+		return 0
+	}
+	valid := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, err := ns.Get(id); err == nil {
+			valid = append(valid, id)
+		}
+	}
+	removed := len(ids) - len(valid)
+	if removed > 0 {
+		// 持久化清理后的链（失败时内存保留原值，下次启动再清理）
+		_ = cs.SetNodeIDs(valid)
+	}
+	return removed
 }
 
 // SetNodeIDs 保存链式代理节点 ID 列表到 app_config 并更新内存缓存（自动去重与去空）。

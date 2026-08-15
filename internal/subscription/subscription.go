@@ -735,6 +735,9 @@ func (sm *SubscriptionManager) UpdateSubscription(url string, label ...string) e
 		Selected bool
 		Delay    int
 	})
+	// 旧服务器按身份键 (addr:port:username) 建索引：刷新后沿用旧 ID，
+	// 避免链式代理（proxyChain）、选中节点等按 ID 引用的配置在刷新后全部失效。
+	idByKey := make(map[string]string)
 	if existingSub != nil {
 		// 获取该订阅下的所有服务器
 		existingServers, err := database.GetServersBySubscriptionID(existingSub.ID)
@@ -747,6 +750,7 @@ func (sm *SubscriptionManager) UpdateSubscription(url string, label ...string) e
 					Selected: s.Selected,
 					Delay:    s.Delay,
 				}
+				idByKey[serverIdentityKey(&s)] = s.ID
 			}
 		}
 	}
@@ -755,6 +759,9 @@ func (sm *SubscriptionManager) UpdateSubscription(url string, label ...string) e
 	if err != nil {
 		return err
 	}
+
+	// 同一身份（addr:port:username）的新服务器沿用旧 ID，保持引用稳定
+	reuseExistingIDs(servers, idByKey)
 
 	if existingSub != nil {
 		if err := database.DeleteServersBySubscriptionID(existingSub.ID); err != nil {
@@ -767,6 +774,23 @@ func (sm *SubscriptionManager) UpdateSubscription(url string, label ...string) e
 	}
 
 	return nil
+}
+
+// serverIdentityKey 返回服务器身份键（addr:port:username），
+// 用于跨订阅刷新识别“同一台服务器”，从而沿用旧 ID 保持引用稳定。
+func serverIdentityKey(s *model.Node) string {
+	return fmt.Sprintf("%s:%d:%s", s.Addr, s.Port, s.Username)
+}
+
+// reuseExistingIDs 对解析出的服务器应用旧 ID：与 idByKey 中同一身份 (addr:port:username)
+// 匹配的服务器沿用旧 ID。订阅刷新会重新生成节点 ID（历史版本含时间因子），
+// 若不沿用旧 ID，链式代理（proxyChain）、选中节点等按 ID 引用的配置会在刷新后全部失效。
+func reuseExistingIDs(servers []model.Node, idByKey map[string]string) {
+	for i := range servers {
+		if oldID, ok := idByKey[serverIdentityKey(&servers[i])]; ok {
+			servers[i].ID = oldID
+		}
+	}
 }
 
 // UpdateSubscriptionByID 根据订阅 ID 更新订阅。
@@ -812,7 +836,8 @@ func (sm *SubscriptionManager) parseSubscription(content string) ([]model.Node, 
 		for i, js := range jsonServers {
 			rawConfig, _ := json.Marshal(js)
 			servers[i] = model.Node{
-				ID:           utils.GenerateServerID(js.Addr, js.Port, js.Username),
+				// 用户名与密码共同参与哈希，避免同一 addr:port 下多节点（如无凭据的 socks5）ID 碰撞
+				ID:           utils.GenerateServerID(js.Addr, js.Port, js.Username+"|"+js.Password),
 				Name:         js.Name,
 				Addr:         js.Addr,
 				Port:         js.Port,

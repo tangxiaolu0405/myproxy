@@ -56,6 +56,11 @@ func (ss *SubscriptionService) UpdateByID(id int64) error {
 		}
 	}
 
+	// 订阅刷新后节点 ID 可能变化，清理链中失效的节点 ID，避免显示裸 UUID
+	if ss.store.Chain != nil {
+		ss.store.Chain.PruneInvalid(ss.store.Nodes)
+	}
+
 	return nil
 }
 
@@ -89,6 +94,11 @@ func (ss *SubscriptionService) Fetch(url string, label ...string) error {
 		if err := ss.store.Nodes.Load(); err != nil {
 			return fmt.Errorf("刷新节点数据失败: %w", err)
 		}
+	}
+
+	// 订阅刷新后节点 ID 可能变化，清理链中失效的节点 ID，避免显示裸 UUID
+	if ss.store.Chain != nil {
+		ss.store.Chain.PruneInvalid(ss.store.Nodes)
 	}
 
 	return nil

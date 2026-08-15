@@ -330,6 +330,8 @@ type MainWindow struct {
 	chainPage         fyne.CanvasObject // 链式代理配置页面
 	chainPageInstance *ChainPage        // 链式代理配置页面实例
 
+	chainDrawer *ChainDrawer // 主页右侧链式代理悬浮抽屉（"<" 手柄 + 悬浮面板）
+
 	homeLogoIcon  *widget.Icon  // 主页logo图标，用于主题变化时更新
 	homePortLabel *widget.Label // 主页底栏：本地入站端口
 
@@ -369,6 +371,9 @@ func NewMainWindow(appState *AppState) *MainWindow {
 		localPort = appState.ConfigService.GetLocalInboundPort()
 	}
 	mw.systemProxy = systemproxy.NewSystemProxy(database.LocalMixedInboundListenHost, localPort)
+
+	// 主页右侧链式代理悬浮抽屉
+	mw.chainDrawer = NewChainDrawer(appState)
 
 	return mw
 }
@@ -441,6 +446,10 @@ func (mw *MainWindow) Cleanup() {
 	if mw.chainPageInstance != nil {
 		mw.chainPageInstance.Cleanup()
 		mw.chainPageInstance = nil
+	}
+	if mw.chainDrawer != nil {
+		mw.chainDrawer.Cleanup()
+		mw.chainDrawer = nil
 	}
 }
 
@@ -657,13 +666,19 @@ func (mw *MainWindow) buildHomePage() fyne.CanvasObject {
 	mw.updateHomePortLabel()
 	footerBar := newPaddedWithSize(mw.homePortLabel, pad)
 
-	return container.NewBorder(
+	mainContent := container.NewBorder(
 		headerBar,
 		footerBar,
 		nil,
 		nil,
 		container.NewCenter(content),
 	)
+
+	// 顶层叠加链式代理悬浮抽屉覆盖层（右侧 "<" 手柄 + 遮罩 + 悬浮面板）
+	if mw.chainDrawer == nil {
+		mw.chainDrawer = NewChainDrawer(mw.appState)
+	}
+	return container.NewStack(mainContent, mw.chainDrawer.BuildOverlay())
 }
 
 // wrapPageWithBackground 为页面内容包裹主题背景色。

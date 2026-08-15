@@ -18,12 +18,78 @@ import (
 // chainRowHeight 链内节点行高（与 ChainTargetItem.MinSize 一致，用于计算插入位置）。
 const chainRowHeight = 44
 
+// chainRowContentLayout 链行内容布局：序号固定在左、删除按钮固定在右、节点名称占满中间。
+// 名称 Label 使用 TextTruncate 截断，其 MinSize 仅为「一个字符」宽（Fyne 对截断文本返回最小尺寸），
+// 因此不能放入按 MinSize 布局的 HBox（名称会被压到不可见），必须显式分配剩余宽度。
+type chainRowContentLayout struct{}
+
+func (chainRowContentLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
+	if len(objs) < 3 {
+		return
+	}
+	idx, name, del := objs[0], objs[1], objs[2]
+	idxSize := idx.MinSize()
+	delSize := del.MinSize()
+	idx.Resize(fyne.NewSize(idxSize.Width, size.Height))
+	idx.Move(fyne.NewPos(0, 0))
+	del.Resize(fyne.NewSize(delSize.Width, size.Height))
+	del.Move(fyne.NewPos(size.Width-delSize.Width, 0))
+	nameW := size.Width - idxSize.Width - delSize.Width
+	if nameW < 0 {
+		nameW = 0
+	}
+	name.Resize(fyne.NewSize(nameW, size.Height))
+	name.Move(fyne.NewPos(idxSize.Width, 0))
+}
+
+func (chainRowContentLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
+	var w, h float32
+	for _, o := range objs {
+		ms := o.MinSize()
+		w += ms.Width
+		if ms.Height > h {
+			h = ms.Height
+		}
+	}
+	return fyne.NewSize(w, h)
+}
+
+// minWidthLayout 包装单个子控件并强制最小宽度（用于截断 Label 无法自报宽度的场景，
+// 如拖拽悬浮卡片、列表项右侧信息区）。
+type minWidthLayout struct {
+	minWidth float32
+}
+
+func (m minWidthLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
+	if len(objs) == 0 {
+		return
+	}
+	objs[0].Resize(size)
+	objs[0].Move(fyne.NewPos(0, 0))
+}
+
+func (m minWidthLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
+	if len(objs) == 0 {
+		return fyne.NewSize(0, 0)
+	}
+	s := objs[0].MinSize()
+	if s.Width < m.minWidth {
+		s.Width = m.minWidth
+	}
+	return s
+}
+
 // ChainPage 链式代理配置页。
 // 左侧为链（可拖拽换序、移除），右侧为节点搜索列表（拖拽节点生成悬浮矩形框，按上下位置并入左侧链）。
 // 草稿仅存内存，点击「保存」后持久化到 Store.Chain 并切换为链式代理模式；未保存不生效。
+// 支持两种形态：整页导航（默认，返回按钮）与悬浮抽屉（drawerMode，关闭按钮）。
 type ChainPage struct {
 	appState *AppState
 	content  fyne.CanvasObject
+
+	// drawerMode 悬浮抽屉形态：标题栏左侧用关闭按钮替代返回按钮，onClose 为关闭回调。
+	drawerMode bool
+	onClose    func()
 
 	// 右侧节点搜索与列表
 	searchEntry    *widget.Entry
@@ -76,6 +142,13 @@ func NewChainPage(appState *AppState) *ChainPage {
 	return cp
 }
 
+// SetDrawerMode 将页面切换为悬浮抽屉形态：标题栏左侧用关闭按钮替代返回按钮，
+// 点击关闭按钮时回调 onClose（由抽屉组件负责隐藏面板）。
+func (cp *ChainPage) SetDrawerMode(onClose func()) {
+	cp.drawerMode = true
+	cp.onClose = onClose
+}
+
 // Cleanup 释放页面持有的监听器。
 func (cp *ChainPage) Cleanup() {
 	if cp == nil || cp.listener == nil || cp.appState == nil || cp.appState.Store == nil || cp.appState.Store.Nodes == nil {
@@ -90,15 +163,27 @@ func (cp *ChainPage) Cleanup() {
 func (cp *ChainPage) Build() fyne.CanvasObject {
 	pad := innerPadding(cp.appState)
 
-	// 左上角返回按钮（与其他页面一致）
-	backBtn := widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
-		if cp.appState != nil && cp.appState.MainWindow != nil {
-			cp.appState.MainWindow.Back()
-		}
-	})
+	// 左上角：整页形态为返回按钮，抽屉形态为关闭按钮
+	var backBtn *widget.Button
+	if cp.drawerMode {
+		backBtn = widget.NewButtonWithIcon("", theme.CancelIcon(), func() {
+			if cp.onClose != nil {
+				cp.onClose()
+			}
+		})
+	} else {
+		backBtn = widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
+			if cp.appState != nil && cp.appState.MainWindow != nil {
+				cp.appState.MainWindow.Back()
+			}
+		})
+	}
 	backBtn.Importance = widget.LowImportance
 
 	title := NewTitleLabel("链式代理")
+	if cp.drawerMode {
+		title = NewTitleLabel("链式代理配置")
+	}
 
 	// 右上角：清空 + 保存
 	clearBtn := widget.NewButtonWithIcon("清空", theme.DeleteIcon(), cp.onClear)
@@ -213,10 +298,28 @@ func (cp *ChainPage) Refresh() {
 	}
 	// 若外部已保存过链，同步草稿（例如从设置页切换模式后返回）
 	if cp.appState != nil && cp.appState.Store != nil && cp.appState.Store.Chain != nil {
+		// 重新读取数据库中的链，避免进程内缓存过期（如替换二进制/外部修改后仍显示旧链）
+		_ = cp.appState.Store.Chain.Load()
 		cp.draftIDs = cp.appState.Store.Chain.GetNodeIDs()
 	}
+	cp.sanitizeDraft()
 	cp.renderChainList()
 	cp.refreshNodeList()
+}
+
+// sanitizeDraft 过滤草稿中已不存在的节点 ID（订阅刷新等场景可能残留失效 ID），
+// 避免链列表显示裸 UUID；仅过滤内存草稿，不影响已保存的链。
+func (cp *ChainPage) sanitizeDraft() {
+	if cp == nil || cp.appState == nil || cp.appState.Store == nil || cp.appState.Store.Nodes == nil {
+		return
+	}
+	valid := make([]string, 0, len(cp.draftIDs))
+	for _, id := range cp.draftIDs {
+		if _, err := cp.appState.Store.Nodes.Get(id); err == nil {
+			valid = append(valid, id)
+		}
+	}
+	cp.draftIDs = valid
 }
 
 // onClear 清空左侧链草稿。
@@ -344,14 +447,19 @@ func (cp *ChainPage) refreshChain() {
 	cp.renderChainList()
 }
 
-// renderChainList 重建左侧链行列表。
+// renderChainList 重建左侧链行列表（行间插入竖向连接指示 ↓，首=入口、末=出口）。
+// 渲染前先净化草稿，确保每行都能解析出节点名称。
 func (cp *ChainPage) renderChainList() {
 	if cp.chainBox == nil {
 		return
 	}
+	cp.sanitizeDraft()
 	cp.chainBox.RemoveAll()
 	cp.chainRows = cp.chainRows[:0]
 	for i, id := range cp.draftIDs {
+		if i > 0 {
+			cp.chainBox.Add(cp.buildChainConnector())
+		}
 		item := NewChainTargetItem(cp, id, i)
 		cp.chainRows = append(cp.chainRows, item)
 		cp.chainBox.Add(item)
@@ -367,6 +475,15 @@ func (cp *ChainPage) renderChainList() {
 		}
 	}
 	cp.chainBox.Refresh()
+}
+
+// buildChainConnector 构建链节点行之间的竖向连接指示（↓），
+// 用于可视化链的先后顺序（首节点=入口 → 末节点=出口）。
+func (cp *ChainPage) buildChainConnector() fyne.CanvasObject {
+	arrow := canvas.NewText("↓", CurrentThemeColor(cp.appState.App, theme.ColorNamePlaceHolder))
+	arrow.TextSize = 14
+	arrow.Alignment = fyne.TextAlignCenter
+	return container.NewCenter(arrow)
 }
 
 // renderIndicator 更新左侧插入指示线的位置与可见性。
@@ -466,7 +583,9 @@ func (cp *ChainPage) ensureDragPopUp() {
 	cp.dragNameLabel = widget.NewLabel("")
 	cp.dragNameLabel.TextStyle = fyne.TextStyle{Bold: true}
 	cp.dragNameLabel.Truncation = fyne.TextTruncateEllipsis
-	body := newPaddedWithSize(container.NewHBox(widget.NewIcon(theme.ListIcon()), cp.dragNameLabel), innerPadding(cp.appState))
+	// 拖拽卡片按内容 MinSize 定宽（截断 Label 的 MinSize 过小），强制最小宽度以展示节点名称
+	body := newPaddedWithSize(container.New(&minWidthLayout{minWidth: 160},
+		container.NewHBox(widget.NewIcon(theme.ListIcon()), cp.dragNameLabel)), innerPadding(cp.appState))
 	cp.dragPopUp = widget.NewPopUp(container.NewStack(card, body), cp.appState.Window.Canvas())
 }
 
@@ -580,8 +699,12 @@ func NewChainSourceItem(page *ChainPage) *ChainSourceItem {
 	item.nameLabel.TextStyle = fyne.TextStyle{Bold: true}
 	item.infoLabel = widget.NewLabel("")
 	item.infoLabel.Wrapping = fyne.TextTruncate
+	item.infoLabel.Truncation = fyne.TextTruncateEllipsis
 	item.infoLabel.Importance = widget.LowImportance
-	content := container.NewBorder(nil, nil, nil, item.infoLabel, item.nameLabel)
+	// 信息区放在 Border 右侧槽位，槽位按 MinSize 取宽（截断 Label 的 MinSize 过小），需强制最小宽度
+	content := container.NewBorder(nil, nil, nil,
+		container.New(&minWidthLayout{minWidth: 96}, item.infoLabel),
+		item.nameLabel)
 	item.renderObj = container.NewStack(item.bgRect, newPaddedWithSize(content, innerPadding(page.appState)))
 	item.ExtendBaseWidget(item)
 	return item
@@ -649,6 +772,7 @@ func NewChainTargetItem(page *ChainPage, nodeID string, index int) *ChainTargetI
 
 	item.nameLabel = widget.NewLabel("")
 	item.nameLabel.Wrapping = fyne.TextTruncate
+	item.nameLabel.Truncation = fyne.TextTruncateEllipsis // 过长显示省略号
 	item.nameLabel.TextStyle = fyne.TextStyle{Bold: true}
 
 	item.removeBtn = widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
@@ -656,9 +780,10 @@ func NewChainTargetItem(page *ChainPage, nodeID string, index int) *ChainTargetI
 	})
 	item.removeBtn.Importance = widget.LowImportance
 
-	content := container.NewBorder(nil, nil, nil, item.removeBtn,
-		container.NewHBox(item.idxLabel, item.nameLabel))
-	item.renderObj = container.NewStack(item.bgRect, newPaddedWithSize(content, innerPadding(page.appState)))
+	// 行布局：序号左、删除按钮右、名称占满中间（不能用 HBox，截断 Label 的 MinSize 过小会导致名称不可见）
+	rowContent := container.NewWithoutLayout(item.idxLabel, item.nameLabel, item.removeBtn)
+	rowContent.Layout = chainRowContentLayout{}
+	item.renderObj = container.NewStack(item.bgRect, newPaddedWithSize(rowContent, innerPadding(page.appState)))
 	item.ExtendBaseWidget(item)
 
 	if page.appState != nil && page.appState.Store != nil && page.appState.Store.Nodes != nil {
